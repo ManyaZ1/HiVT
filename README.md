@@ -10,7 +10,7 @@ This repository contains the official implementation of [HiVT: Hierarchical Vect
 git clone https://github.com/ZikangZhou/HiVT.git
 cd HiVT
 ```
-
+#commit test
 2\. Create a conda environment and install the dependencies:
 ```
 conda create -n HiVT python=3.8
