@@ -42,11 +42,13 @@ conda install pytorch-lightning==1.5.2 -c conda-forge
 To train HiVT-64:
 ```
 python train.py --root /path/to/dataset_root/ --embed_dim 64
+/home/manyazog/argoverse
 ```
 
 To train HiVT-128:
 ```
 python train.py --root /path/to/dataset_root/ --embed_dim 128
+python train.py --root --root /home/manyazog/argoverse --embed_dim 128
 ```
 
 **Note**: When running the training script for the first time, it will take several hours to preprocess the data (~3.5 hours on my machine). Training on an RTX 2080 Ti GPU takes 35-40 minutes per epoch.
@@ -61,6 +63,11 @@ tensorboard --logdir lightning_logs/
 To evaluate the prediction performance:
 ```
 python eval.py --root /path/to/dataset_root/ --batch_size 32 --ckpt_path /path/to/your_checkpoint.ckpt
+python eval.py --root /home/manyazog/argoverse --batch_size 32 --ckpt_path /home/manyazog/HiVT/checkpoints/HiVT-64/checkpoints/epoch=63-step=411903.ckpt
+
+
+
+ python eval.py --root /home/manyazog/argoverse --batch_size 32 --ckpt_path /home/manyazog/HiVT/lightning_logs/version_0/checkpoints/epoch=63-step=411903.ckpt
 ```
 
 ## Pretrained Models
