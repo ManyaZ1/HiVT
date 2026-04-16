@@ -70,6 +70,46 @@ python eval.py --root /home/manyazog/argoverse --batch_size 32 --ckpt_path /home
  python eval.py --root /home/manyazog/argoverse --batch_size 32 --ckpt_path /home/manyazog/HiVT/lightning_logs/version_0/checkpoints/epoch=63-step=411903.ckpt
 ```
 
+## Data Preprocessing
+
+HiVT preprocesses each CSV scene into a serialized PyTorch Geometric sample (`.pt`) the first time you run training or evaluation.
+
+- Preprocessing is triggered automatically when `ArgoverseV1Dataset` is constructed in `train.py` or `eval.py`.
+- Raw files are read from:
+  - `/path/to/dataset_root/train/data/`
+  - `/path/to/dataset_root/val/data/`
+- Processed files are cached at:
+  - `/path/to/dataset_root/train/processed/`
+  - `/path/to/dataset_root/val/processed/`
+
+Each processed sample contains actor history/future tensors, masks, lane features, graph edges, and scene normalization metadata.
+
+**Important**: The first preprocessing pass can take hours depending on your machine and storage speed. Later runs reuse the cached `.pt` files.
+
+## Inference Pipeline
+
+Inference in this repo is executed through the evaluation entry point (`eval.py`).
+
+1. Load checkpoint and model hyperparameters:
+  - `HiVT.load_from_checkpoint(..., parallel=True)`
+2. Build validation dataset:
+  - `ArgoverseV1Dataset(root=..., split='val', local_radius=model.hparams.local_radius)`
+  - This step also triggers preprocessing if cache is missing.
+3. Build dataloader:
+  - `torch_geometric.data.DataLoader(..., shuffle=False)`
+4. Run validation loop with PyTorch Lightning:
+  - `trainer.validate(model, dataloader)`
+5. Aggregate and report inference metrics:
+  - `val_minADE`, `val_minFDE`, `val_minMR`
+
+Quick command:
+
+```
+python eval.py --root /path/to/dataset_root/ --batch_size 32 --ckpt_path /path/to/your_checkpoint.ckpt
+```
+
+If you evaluate multiple checkpoints on the same dataset root, preprocessing is not repeated unless you delete the `processed/` directories.
+
 ## Pretrained Models
 
 We provide the pretrained HiVT-64 and HiVT-128 in [checkpoints/](checkpoints). You can evaluate the pretrained models using the aforementioned evaluation command, or have a look at the training process via TensorBoard:
