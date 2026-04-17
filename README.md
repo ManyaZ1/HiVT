@@ -110,6 +110,32 @@ python eval.py --root /path/to/dataset_root/ --batch_size 32 --ckpt_path /path/t
 
 If you evaluate multiple checkpoints on the same dataset root, preprocessing is not repeated unless you delete the `processed/` directories.
 
+## Visualization
+
+To visualize one validation sample with map context, history, ground truth, and multimodal predictions:
+
+```
+python visualize.py --root /path/to/dataset_root/ --ckpt_path /path/to/your_checkpoint.ckpt --sample_idx 0
+```
+
+Example:
+
+```
+python visualize.py --root /home/manyazog/argoverse --ckpt_path /home/manyazog/HiVT/checkpoints/HiVT-64/checkpoints/epoch=63-step=411903.ckpt --sample_idx 0
+```
+
+Useful options:
+
+- `--map_radius`: lane query radius (meters) around scene origin, default is `80.0`.
+- `--save_path`: save figure to disk, for example `--save_path vis_sample0.png`.
+
+Plot legend:
+
+- Gray lines: lane centerlines from ArgoverseMap.
+- Blue line with circles: observed history.
+- Green line with squares: ground-truth future.
+- Red lines with triangles: predicted modes (alpha weighted by mode confidence).
+
 ## Pretrained Models
 
 We provide the pretrained HiVT-64 and HiVT-128 in [checkpoints/](checkpoints). You can evaluate the pretrained models using the aforementioned evaluation command, or have a look at the training process via TensorBoard:
