@@ -133,7 +133,7 @@ def visualize_predictions(
     avm,
     map_radius: float = 80.0,
     max_agents: int = 6,  # FIX 4: explicit cap with log message
-    save_dir: str | None = None,
+    save_dir: Optional[str] = None,
     sample_idx: int = 0,
 ):
     """
