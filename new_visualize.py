@@ -18,7 +18,7 @@ import numpy as np
 import torch
 from argoverse.map_representation.map_api import ArgoverseMap
 from torch_geometric.data import DataLoader
-
+from typing import Optional
 from datasets import ArgoverseV1Dataset
 from models.hivt import HiVT
 
@@ -172,7 +172,7 @@ def visualize_predictions(
     # HiVT rotates each actor's frame by its own heading (rotate_mat per agent).
     # To align with data.positions and the map we need the inverse rotation,
     # which for an orthogonal matrix is simply the transpose.
-    rotate_mat_batch = data.get('rotate_mat', None)
+    rotate_mat_batch = getattr(data, 'rotate_mat', None)
     if rotate_mat_batch is not None:
         R = (rotate_mat_batch.detach().cpu()
              if torch.is_tensor(rotate_mat_batch)
@@ -298,7 +298,11 @@ def visualize_predictions(
             fig.savefig(fpath, dpi=150, bbox_inches='tight')
             print(f'  Saved → {fpath}')
 
-        plt.show()
+        #plt.show()
+        # save as PNG and close to free memory; otherwise too many open figures can cause issues in long-running sessions.
+        pngpath = f'visualisations/sample{sample_idx:04d}_agent{agent_idx:03d}.png'
+        plt.savefig(pngpath, dpi=150, bbox_inches='tight')
+
         plt.close(fig)
 
 
