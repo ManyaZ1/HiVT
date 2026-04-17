@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#  python visualize.py   --root /home/manyazog/argoverse   --ckpt_path /home/manyazog/HiVT/checkpoints/HiVT-64/checkpoints/epoch=63-step=411903.ckpt   --sample_idx 0   --map_radius 80
 from argparse import ArgumentParser
 
 import matplotlib.pyplot as plt
