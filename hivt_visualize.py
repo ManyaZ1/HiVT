@@ -116,7 +116,43 @@ def diagnose_model_outputs(y_hat, pi):
     print(f"\n  ✔  y_hat is: {yhat_label}")
     print("="*60 + "\n")
 
+# find interesting samples based on diagnostics:
+# Add this to your script to scan for interesting samples
+def find_multimodal_scenes(dataloader, model, n_samples=200, min_prob_gap=0.3):
+    """
+    Scan samples and score them by how DIVERSE their predicted modes are.
+    A good multimodal scene has:
+      1. High variance in mode probabilities (one mode clearly preferred)
+      2. High spatial spread between predicted endpoints
+    """
+    scores = []
+    for count, batch in enumerate(dataloader):
+        if count >= n_samples:
+            break
+        with torch.no_grad():
+            y_hat, pi = model(batch)
 
+        pred  = y_hat[..., :2].detach().cpu()   # [F, N, T, 2]
+        probs = pi.detach().cpu().exp()          # [N, F]  — assuming log-probs
+
+        # Focus on the focal agent (index 0 is usually focal in Argoverse)
+        agent_probs = probs[0]                   # [F]
+        agent_pred  = pred[:, 0, -1, :]          # [F, 2] — final predicted positions
+
+        # Spatial spread: std of endpoint positions across modes
+        endpoint_std = agent_pred.std(dim=0).norm().item()
+
+        # Probability peakiness: max - min  (0=flat, 1=one dominant mode)
+        prob_gap = (agent_probs.max() - agent_probs.min()).item()
+
+        scores.append((count, endpoint_std, prob_gap))
+        print(f"Sample {count:4d} | endpoint_spread={endpoint_std:6.2f}m | prob_gap={prob_gap:.3f}")
+
+    # Sort by endpoint spread descending
+    scores.sort(key=lambda x: x[1], reverse=True)
+    print("\nTop 10 most multimodal samples (by endpoint spread):")
+    for idx, spread, gap in scores[:10]:
+        print(f"  sample {idx:4d} — spread={spread:.2f}m  prob_gap={gap:.3f}")
 # ─────────────────────────────────────────────────────────────────────────────
 # Visualisation
 # ─────────────────────────────────────────────────────────────────────────────
@@ -130,6 +166,8 @@ def visualize_predictions(
     max_agents : int   = 6,
     save_dir: Optional[str] = None,
     sample_idx : int   = 0,
+    show_uncertainty: bool = False,
+    uncertainty_scale: float = 1.5,
 ):
     """
     One figure per visible agent; one subplot per mode, sorted by
@@ -244,7 +282,21 @@ def visualize_predictions(
                     label=f'Mode {mode_idx + 1}')
             ax.plot(*traj[0],  'o', color=c, ms=5,  zorder=5)   # pred start
             ax.plot(*traj[-1], '^', color=c, ms=7,  zorder=5)   # pred end
-
+            # Draw uncertainty ribbon if requested and available
+            print(f"pred_abs.shape: {pred_abs.shape}, show_uncertainty: {show_uncertainty}")
+            if show_uncertainty and pred_abs.shape[-1] >= 4:
+                b = pred_abs[mode_idx, agent_idx, :, 2:4]  # [T, 2] (b_x, b_y)
+                mu_x = traj[:, 0]
+                mu_y = traj[:, 1]
+                b_y = b[:, 1].numpy()
+                print(f"Uncertainty b_y for agent {agent_idx}, mode {mode_idx}: {b_y}")
+                ax.fill_between(
+                    mu_x,
+                    mu_y - uncertainty_scale * b_y,
+                    mu_y + uncertainty_scale * b_y,
+                    color=c, alpha=0.4, zorder=2,
+                    label='Uncertainty' if col == 0 else None
+                )
             p = agent_probs[mode_idx]
             ax.set_title(f'Mode {mode_idx + 1}  (rank {col + 1})\np = {p:.4f}',
                          fontsize=9)
@@ -268,8 +320,8 @@ def visualize_predictions(
                               f'sample{sample_idx:04d}_agent{agent_idx:03d}.png')
             fig.savefig(fp, dpi=150, bbox_inches='tight')
             print(f'  saved → {fp}')
-
-        plt.show()
+        else:
+            plt.show()
         plt.close(fig)
 
 
@@ -284,9 +336,15 @@ if __name__ == '__main__':
     parser.add_argument('--sample_idx', type=int, default=0)
     parser.add_argument('--map_radius', type=float, default=80.0)
     parser.add_argument('--max_agents', type=int,   default=6)
-    parser.add_argument('--save_dir',   type=str,   default=None)
+    parser.add_argument('--save_dir',   type=str,   default='/home/manyazog/HiVT/visualisations/')
     parser.add_argument('--diagnose',   action='store_true',
                         help='Print diagnostics only, skip plotting')
+    parser.add_argument('--find_multimodal', action='store_true',
+    help='Scan dataset for highly multimodal scenes and print their indices.')
+    parser.add_argument('--show_uncertainty', action='store_true',
+    help='Draw shaded uncertainty ribbon for each predicted trajectory mode (if available)')
+    parser.add_argument('--uncertainty_scale', type=float, default=1.5,
+    help='Scale factor for Laplace b (e.g., 1.5 ≈ 80%% interval, 3 ≈ 95%%)')
     args = parser.parse_args()
 
     print(f'Loading model from {args.ckpt_path} …')
@@ -309,7 +367,9 @@ if __name__ == '__main__':
             y_hat, pi = model(batch)
 
         diagnose_model_outputs(y_hat, pi)   # always printed
-
+        if args.find_multimodal:
+            find_multimodal_scenes(dataloader, model, n_samples=200, min_prob_gap=0.3)
+            exit(0)
         if not args.diagnose:
             visualize_predictions(
                 data       = batch,
@@ -320,6 +380,8 @@ if __name__ == '__main__':
                 max_agents = args.max_agents,
                 save_dir   = args.save_dir,
                 sample_idx = args.sample_idx,
+                show_uncertainty=args.show_uncertainty,
+                uncertainty_scale=args.uncertainty_scale,
             )
         break
     else:
