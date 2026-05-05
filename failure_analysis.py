@@ -85,10 +85,12 @@ def run_failure_analysis(model, dataloader, device, output_dir='failure_analysis
     with torch.no_grad():
         for batch_idx, data in enumerate(dataloader):
             data = data.to(device)
-            pred = model(data)  # (N, K, T, 2) — adjust to your HiVT output format
+            y_hat, _ = model(data)  # y_hat: (K, N, T, 4)
+            # Convert to (N, K, T, 2)
+            y_hat = y_hat.permute(1, 0, 2, 3)[..., :2]  # (N, K, T, 2)
 
             min_ade, min_fde, miss = compute_scenario_metrics(
-                pred, data.y, data.padding_mask[:, 20:]  # AV1: 20 hist, 30 future
+                y_hat, data.y, data.padding_mask[:, 20:]  # AV1: 20 hist, 30 future
             )
 
             tags = tag_scenario(data)
