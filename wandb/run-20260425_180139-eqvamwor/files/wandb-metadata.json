@@ -1,0 +1,39 @@
+{
+  "os": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.17",
+  "python": "CPython 3.8.20",
+  "startedAt": "2026-04-25T15:01:39.218743Z",
+  "program": "failure_analysis.py",
+  "codePath": "failure_analysis.py",
+  "codePathLocal": "failure_analysis.py",
+  "git": {
+    "remote": "https://github.com/ManyaZ1/HiVT",
+    "commit": "a67f18cb411eade866b87bdbf43c415fb4534225"
+  },
+  "email": "up1096060@ac.upatras.gr",
+  "root": "/home/manyazog/HiVT",
+  "host": "DESKTOP-QK5E7F8",
+  "executable": "/home/manyazog/miniconda3/envs/HiVT/bin/python",
+  "cpu_count": 4,
+  "cpu_count_logical": 8,
+  "gpu": "NVIDIA GeForce RTX 2060 SUPER",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "1081101176832",
+      "used": "174927147008"
+    }
+  },
+  "memory": {
+    "total": "12543295488"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA GeForce RTX 2060 SUPER",
+      "memoryTotal": "8589934592",
+      "architecture": "Turing",
+      "uuid": "GPU-25de88de-7a11-a69b-d38e-8ba1a43b082e"
+    }
+  ],
+  "cudaVersion": "13.1",
+  "writerId": "zdo33qzboae1t62rye7p802yxvuvne5q"
+}

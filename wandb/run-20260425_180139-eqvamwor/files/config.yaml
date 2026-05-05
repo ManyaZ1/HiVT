@@ -1,0 +1,60 @@
+_wandb:
+    value:
+        cli_version: 0.24.2
+        e:
+            zdo33qzboae1t62rye7p802yxvuvne5q:
+                codePath: failure_analysis.py
+                codePathLocal: failure_analysis.py
+                cpu_count: 4
+                cpu_count_logical: 8
+                cudaVersion: "13.1"
+                disk:
+                    /:
+                        total: "1081101176832"
+                        used: "174927147008"
+                email: up1096060@ac.upatras.gr
+                executable: /home/manyazog/miniconda3/envs/HiVT/bin/python
+                git:
+                    commit: a67f18cb411eade866b87bdbf43c415fb4534225
+                    remote: https://github.com/ManyaZ1/HiVT
+                gpu: NVIDIA GeForce RTX 2060 SUPER
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Turing
+                      memoryTotal: "8589934592"
+                      name: NVIDIA GeForce RTX 2060 SUPER
+                      uuid: GPU-25de88de-7a11-a69b-d38e-8ba1a43b082e
+                host: DESKTOP-QK5E7F8
+                memory:
+                    total: "12543295488"
+                os: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.17
+                program: failure_analysis.py
+                python: CPython 3.8.20
+                root: /home/manyazog/HiVT
+                startedAt: "2026-04-25T15:01:39.218743Z"
+                writerId: zdo33qzboae1t62rye7p802yxvuvne5q
+        m: []
+        python_version: 3.8.20
+        t:
+            "1":
+                - 1
+                - 5
+                - 9
+                - 50
+                - 51
+                - 53
+                - 77
+            "2":
+                - 1
+                - 5
+                - 9
+                - 50
+                - 51
+                - 53
+                - 77
+            "3":
+                - 13
+            "4": 3.8.20
+            "5": 0.24.2
+            "12": 0.24.2
+            "13": linux-x86_64

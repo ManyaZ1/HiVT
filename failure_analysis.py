@@ -132,3 +132,16 @@ def run_failure_analysis(model, dataloader, device, output_dir='failure_analysis
 
     wandb.finish()
     return df
+
+if __name__ == '__main__':
+    # Example usage:
+    from torch_geometric.data import DataLoader
+    from datasets import ArgoverseV1Dataset
+    from models.hivt import HiVT
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = HiVT.load_from_checkpoint('/home/manyazog/HiVT/checkpoints/HiVT-64/checkpoints/epoch=63-step=411903.ckpt').to(device)
+    dataset = ArgoverseV1Dataset(root='/home/manyazog/argoverse', split='val')
+    dataloader = DataLoader(dataset, batch_size=16, shuffle=False, num_workers=4)
+
+    df = run_failure_analysis(model, dataloader, device)
