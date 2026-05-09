@@ -18,7 +18,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils import init_weights
-
+'''MLP decoder is used in practice because it is simpler, faster, and sufficient
+ for the design of the model. The GRU decoder is mainly there as an alternative 
+ option or for ablation‑style experiments, not as the default prediction head.'''
 
 class GRUDecoder(nn.Module):
 
