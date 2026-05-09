@@ -24,6 +24,7 @@ from metrics import MR
 from models import GlobalInteractor
 from models import LocalEncoder
 from models import MLPDecoder
+from models import HiVTDecoderWithIntentionQueries
 from utils import TemporalData
 
 
@@ -75,11 +76,18 @@ class HiVT(pl.LightningModule):
                                                   num_layers=num_global_layers,
                                                   dropout=dropout,
                                                   rotate=rotate)
-        self.decoder = MLPDecoder(local_channels=embed_dim,
-                                  global_channels=embed_dim,
-                                  future_steps=future_steps,
-                                  num_modes=num_modes,
-                                  uncertain=True)
+        # self.decoder = MLPDecoder(local_channels=embed_dim,
+        #                           global_channels=embed_dim,
+        #                           future_steps=future_steps,
+        #                           num_modes=num_modes,
+        #                           uncertain=True)
+        intention_points = np.load("intention_points_k64.npy")   # (64, 2)
+        self.decoder = decoder = HiVTDecoderWithIntentionQueries(
+                intention_points=intention_points,
+                d_model=64,           # match HiVT's hidden dim
+                future_steps=30,      # Argoverse 1: 3s @ 10Hz
+                num_heads=8
+        )
         self.reg_loss = LaplaceNLLLoss(reduction='mean')
         self.cls_loss = SoftTargetCrossEntropyLoss(reduction='mean')
 
