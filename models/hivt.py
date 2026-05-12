@@ -26,7 +26,7 @@ from models import LocalEncoder
 from models import MLPDecoder
 from models import HiVTDecoderWithIntentionQueries
 from utils import TemporalData
-
+import numpy as np
 
 class HiVT(pl.LightningModule):
 
@@ -82,7 +82,7 @@ class HiVT(pl.LightningModule):
         #                           num_modes=num_modes,
         #                           uncertain=True)
         intention_points = np.load("intention_points_k64.npy")   # (64, 2)
-        self.decoder = decoder = HiVTDecoderWithIntentionQueries(
+        self.decoder = HiVTDecoderWithIntentionQueries(
                 intention_points=intention_points,
                 d_model=64,           # match HiVT's hidden dim
                 future_steps=30,      # Argoverse 1: 3s @ 10Hz
@@ -134,6 +134,7 @@ class HiVT(pl.LightningModule):
         y_hat, pi = self(data)
         reg_mask = ~data['padding_mask'][:, self.historical_steps:]
         l2_norm = (torch.norm(y_hat[:, :, :, : 2] - data.y, p=2, dim=-1) * reg_mask).sum(dim=-1)  # [F, N]
+        #l2_norm = (torch.norm(y_hat[:, :, :, :2] - data.y.unsqueeze(0), p=2, dim=-1) * reg_mask).sum(dim=-1)  # [F, N]
         best_mode = l2_norm.argmin(dim=0)
         y_hat_best = y_hat[best_mode, torch.arange(data.num_nodes)]
         reg_loss = self.reg_loss(y_hat_best[reg_mask], data.y[reg_mask])

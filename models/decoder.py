@@ -16,7 +16,8 @@ from typing import Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import numpy as np
+import math
 from utils import init_weights
 
 
@@ -238,7 +239,7 @@ class HiVTDecoderWithIntentionQueries(nn.Module):
         
         # Cross-attention: queries=intentions, keys/values=agent context
         self.cross_attn = nn.MultiheadAttention(
-            d_model, num_heads, batch_first=True
+            d_model, num_heads
         )
         self.norm = nn.LayerNorm(d_model)
         self.ffn = nn.Sequential(
@@ -253,8 +254,9 @@ class HiVTDecoderWithIntentionQueries(nn.Module):
         
         # Confidence head
         self.conf_head = nn.Linear(d_model, 1)
-    
-    def forward(self, agent_context: torch.Tensor) -> tuple:
+    # in hivt.py ln 115
+    #y_hat, pi = self.decoder(local_embed=local_embed, global_embed=global_embed)
+    def forward(self, local_embed: torch.Tensor, global_embed: torch.Tensor) -> tuple:
         """
         agent_context: (B, D) — per-agent encoding from HiVT encoder
         
@@ -262,6 +264,15 @@ class HiVTDecoderWithIntentionQueries(nn.Module):
             trajectories: (B, K, T, 2)
             confidences:  (B, K)
         """
+        # 1. Collapse F modes from global
+        global_collapsed = global_embed.mean(dim=0)        # [N, D]
+
+        # 2. Fuse with local
+        agent_context = local_embed + global_collapsed     # [N, D]  (residual fusion)
+        # — or —
+        #agent_context = torch.cat([local_embed, global_collapsed], dim=-1)  # [N, 2D]
+        # then project: nn.Linear(2*D, D)
+        #agent_context= global_embed
         B, D = agent_context.shape
         
         # Q_I: (K, D) → (B, K, D)  broadcast over batch
@@ -270,9 +281,15 @@ class HiVTDecoderWithIntentionQueries(nn.Module):
         
         # Context as keys/values: (B, 1, D) → attend over K modes
         context = agent_context.unsqueeze(1)                # (B, 1, D)
-        
+        # Permute to (K, B, D) and (1, B, D)
+        queries_t = queries.permute(1, 0, 2)   # (K, B, D)
+        context_t = context.permute(1, 0, 2)   # (1, B, D)
+
         # Cross-attention
-        attn_out, _ = self.cross_attn(queries, context, context)
+        #attn_out, _ = self.cross_attn(queries, context, context)
+        
+        attn_out, _ = self.cross_attn(queries_t, context_t, context_t)  # (K, B, D)
+        attn_out = attn_out.permute(1, 0, 2)   # (B, K, D)
         queries = self.norm(queries + attn_out)             # (B, K, D)
         queries = self.norm2(queries + self.ffn(queries))   # (B, K, D)
         
@@ -281,5 +298,11 @@ class HiVTDecoderWithIntentionQueries(nn.Module):
         traj = traj.view(B, self.K, self.future_steps, 2)  # (B, K, T, 2)
         
         conf = self.conf_head(queries).squeeze(-1)          # (B, K)
-        
+        traj = traj.permute(1, 0, 2, 3)  # (B, K, T, 2) -> (K, B, T, 2)
+        conf = conf.permute(1, 0)        # (B, K) -> (K, B)
+        conf=conf.t()
         return traj, conf
+
+        #  return torch.cat((loc, scale), dim=-1), pi  # [F, N, H, 4], [N, F]
+        # else:
+        #     return loc, pi  # [F, N, H, 2], [N, F]

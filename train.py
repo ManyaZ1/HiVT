@@ -37,7 +37,8 @@ if __name__ == '__main__':
     parser = HiVT.add_model_specific_args(parser)
     args = parser.parse_args()
 
-    model_checkpoint = ModelCheckpoint(monitor=args.monitor, save_top_k=args.save_top_k, mode='min')
+    model_checkpoint = ModelCheckpoint(monitor=args.monitor, save_top_k=args.save_top_k, mode='min'
+                                       ,dirpath='intention_ckpt', filename='HiVT-{epoch:02d}-{val_minFDE:.2f}' )
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[model_checkpoint])
     model = HiVT(**vars(args))
     datamodule = ArgoverseV1DataModule.from_argparse_args(args)
