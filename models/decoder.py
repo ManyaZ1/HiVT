@@ -96,7 +96,7 @@ class MLPDecoder(nn.Module):
                  uncertain: bool = True,
                  min_scale: float = 1e-3) -> None:
         super(MLPDecoder, self).__init__()
-        self.input_size = global_channels
+        self.input_size = global_channels # from HiVT Global_channels=embed_dim
         self.hidden_size = local_channels
         self.future_steps = future_steps
         self.num_modes = num_modes

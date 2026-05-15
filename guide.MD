@@ -30,6 +30,71 @@ This document explains the structure of the HiVT implementation and walks throug
   - `data['rotate_angles']` / `data['rotate_mat']` — rotation augment handling
   - `data.num_nodes`, `data.num_graphs`, `data['agent_index']` — indexing used in training/validation
 
+## Global Interactor
+***How are per mode predictions generated?***
+
+In [models/global_interactor.py](models/global_interactor.py#L75-L77), the multihead projection creates mode-specific embeddings.
+```python
+x = self.norm(x)  # [N, D]
+x = self.multihead_proj(x).view(-1, self.num_modes, self.embed_dim)  # [N, F, D]
+       
+```
+1. x after interaction: shape [N, D]
+2. linear projection to num_modes * D: shape [N, F*D] 
+
+**multihead_proj** is a learned linear layer withlearnable weights and biases. In [models/global_interactor.py](models/global_interactor.py#L55): `self.multihead_proj = nn.Linear(embed_dim, num_modes * embed_dim)`
+
+3. reshape to [N, F, D]
+4. transpose to [F, N, D]
+
+## Decoder
+
+The decoder is implemented as `MLPDecoder` in [models/decoder.py](models/decoder.py#L87). It takes the global embeddings (which are mode-specific) and produces:
+- `y_hat`: predicted future trajectories of shape [F, N, T, D]
+- `pi`: predicted mode probabilities of shape [N, F]
+
+### input to decoder
+
+**local_emb**: [N, D] — per AGENT (N) local embedding from the local encoder. 
+expand for modes: shape -> [F, N, D] 
+
+**global_emb**: [F, N, D] — per-mode global embedding from the global interactor.
+
+### code breakdown for decoder input processing
+1. expand local embed
+2. concatenate along feature dimension: [F, N, 2D]
+```python
+torch.cat((local_embed.expand(self.num_modes, *local_embed.shape),
+                                global_embed), dim=-1)
+```
+(example If local_embed is [N=32, D=64] and global_embed is [6, 32, 64]: After expand: local becomes [6, 32, 64], After cat along dim=-1: result is [6, 32, 128] [MODES, AGENTS, 2*FEATURES])
+
+3. Sequential layer 
+```python
+pi = self.pi(torch.cat((local_embed.expand(self.num_modes, *local_embed.shape),
+                                global_embed), dim=-1)).squeeze(-1).t()
+```
+**final layer** is nn.Linear(..., 1)        
+#### Results
+Feeding a tensor of shape [F, N, feat] produces output shape [F, N, 1] (one scalar logit per (mode, agent)).
+
+- `.squeeze(-1).t():` removes the trailing size-1 dimension → [F, N]
+- .t() transposes the last two dims → [N, F]
+
+Final pi is shape [N, F]: one logit per agent per mode (agents as rows, modes as columns).
+
+---
+
+
+out = self.aggr_embed(torch.cat((global_embed, local_embed.expand(self.num_modes, *local_embed.shape)), dim=-1))
+
+
+
+
+
+
+  ---
+
 ## How forward / training / validation work (brief)
 - Forward (`models.HiVT.forward`):
   - Optional rotation: builds per-node 2×2 rotation matrices and rotates `data.y` if present.
