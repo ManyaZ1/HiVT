@@ -34,12 +34,26 @@ if __name__ == '__main__':
     parser.add_argument('--max_epochs', type=int, default=64)
     parser.add_argument('--monitor', type=str, default='val_minFDE', choices=['val_minADE', 'val_minFDE', 'val_minMR'])
     parser.add_argument('--save_top_k', type=int, default=5)
+    parser.add_argument('--checkpoint_every_n_epochs', type=int, default=20)
+    
     parser = HiVT.add_model_specific_args(parser)
     args = parser.parse_args()
 
-    model_checkpoint = ModelCheckpoint(monitor=args.monitor, save_top_k=args.save_top_k, mode='min'
-                                       ,dirpath='intention_ckpt', filename='HiVT-{epoch:02d}-{val_minFDE:.2f}' )
-    trainer = pl.Trainer.from_argparse_args(args, callbacks=[model_checkpoint])
+    best_checkpoint = ModelCheckpoint(
+        monitor=args.monitor,
+        save_top_k=args.save_top_k,
+        mode='min',
+        dirpath='intention_ckpt/best',
+        filename='HiVT-{epoch:02d}-{val_minFDE:.2f}',
+    )
+    periodic_checkpoint = ModelCheckpoint(
+        dirpath='intention_ckpt/periodic',
+        filename='HiVT-{epoch:02d}',
+        every_n_epochs=args.checkpoint_every_n_epochs,
+        save_top_k=-1,
+        save_last=True,
+    )
+    trainer = pl.Trainer.from_argparse_args(args, callbacks=[best_checkpoint, periodic_checkpoint])
     model = HiVT(**vars(args))
     datamodule = ArgoverseV1DataModule.from_argparse_args(args)
     trainer.fit(model, datamodule)

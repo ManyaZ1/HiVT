@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from argparse import ArgumentParser
+import os
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -122,6 +123,11 @@ def _get_local_lane_centerlines(data, avm, map_radius):
     return local_centerlines
 
 
+def _ckpt_stem(ckpt_path: str) -> str:
+    """Return a filesystem-safe checkpoint stem for filenames."""
+    return os.path.splitext(os.path.basename(ckpt_path))[0]
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Main visualisation function
 # ──────────────────────────────────────────────────────────────────────────────
@@ -133,11 +139,12 @@ def visualize_predictions(
     avm,
     map_radius: float = 80.0,
     max_agents: int = 6,  # FIX 4: explicit cap with log message
+    max_modes: int = 8,
     save_dir: Optional[str] = None,
     sample_idx: int = 0,
 ):
     """
-    For each visible agent, produce one figure with F subplots (one per mode).
+    For each visible agent, produce one figure with up to `max_modes` subplots.
 
     Args:
         data        : Batched PyG temporal data (batch_size == 1).
@@ -148,6 +155,7 @@ def visualize_predictions(
         avm         : Initialised ArgoverseMap instance.
         map_radius  : Lane search radius in metres around data.origin.
         max_agents  : Maximum number of agents to plot.
+        max_modes   : Maximum number of highest-probability modes to plot.
         save_dir    : Directory to write per-agent PNG files (optional).
         sample_idx  : Used only in the saved file name.
     """
@@ -214,27 +222,31 @@ def visualize_predictions(
 
     # ── 8. Per-agent figures ──────────────────────────────────────────────────
     # Sort modes by descending probability for the focal agent so the most
-    # likely trajectory is always in the first (leftmost) subplot.
+    # likely trajectory is always first.
     mode_colors = plt.cm.plasma(np.linspace(0.15, 0.85, num_modes))
 
     for agent_idx in agent_indices:
         agent_probs   = probs[agent_idx].numpy()               # [F]
         sorted_modes  = np.argsort(agent_probs)[::-1]          # high → low prob
+        shown_modes = sorted_modes[:max_modes]
+        n_plots = len(shown_modes)
+        n_cols = min(4, n_plots)
+        n_rows = int(np.ceil(n_plots / n_cols))
 
         has_future = (~padding_mask[agent_idx, 20:]).numpy()   # [T_future]
         has_gt     = has_future.any()
 
         fig, axes = plt.subplots(
-            1, num_modes,
-            figsize=(4 * num_modes, 5),
+            n_rows, n_cols,
+            figsize=(4 * n_cols, 4 * n_rows),
             squeeze=False,
         )
-        axes = axes[0]  # shape [F]
+        axes = axes.ravel()
 
         hist_traj = pos[agent_idx, :20].numpy()               # [20, 2]
         gt_traj   = y_true_abs[agent_idx].numpy()             # [T_future, 2]
 
-        for plot_col, mode_idx in enumerate(sorted_modes):
+        for plot_col, mode_idx in enumerate(shown_modes):
             ax = axes[plot_col]
 
             # — Map ————————————————————————————————————————————
@@ -280,28 +292,37 @@ def visualize_predictions(
             ax.legend(loc='best', fontsize=7)
             ax.set_aspect('equal', adjustable='datalim')
 
+        # Hide unused axes when n_plots is not a full grid.
+        for ax in axes[n_plots:]:
+            ax.axis('off')
+
         fig.suptitle(
             f'HiVT — Agent {agent_idx}  |  {city_name}  '
-            f'|  sample {sample_idx}'
+            f'|  sample {sample_idx}  |  top {n_plots}/{num_modes} modes'
             + ('' if has_gt else '  [no ground truth]'),
             fontsize=11,
             fontweight='bold',
         )
-        plt.tight_layout()
+        fig.tight_layout()
 
         if save_dir:
-            import os
             os.makedirs(save_dir, exist_ok=True)
             fpath = os.path.join(
-                save_dir, f'sample{sample_idx:04d}_agent{agent_idx:03d}.png'
+                save_dir,
+                f'sample{sample_idx:04d}_agent{agent_idx:03d}_ckpt{_ckpt_stem(args.ckpt_path)}.png'
             )
             fig.savefig(fpath, dpi=150, bbox_inches='tight')
             print(f'  Saved → {fpath}')
 
-        #plt.show()
-        # save as PNG and close to free memory; otherwise too many open figures can cause issues in long-running sessions.
-        pngpath = f'visualisations/sample{sample_idx:04d}_agent{agent_idx:03d}.png'
-        plt.savefig(pngpath, dpi=150, bbox_inches='tight')
+        # Save to default folder only when save_dir is not provided.
+        if not save_dir:
+            os.makedirs('visualisations', exist_ok=True)
+            pngpath = (
+                f'visualisations/sample{sample_idx:04d}_agent{agent_idx:03d}'
+                f'_ckpt{_ckpt_stem(args.ckpt_path)}.png'
+            )
+            fig.savefig(pngpath, dpi=150, bbox_inches='tight')
+            print(f'  Saved → {pngpath}')
 
         plt.close(fig)
 
@@ -325,6 +346,8 @@ if __name__ == '__main__':
                         help='Lane search radius in metres around origin')
     parser.add_argument('--max_agents', type=int,  default=6,
                         help='Maximum number of agents to show per sample')
+    parser.add_argument('--max_modes',  type=int, default=8,
+                        help='Maximum number of highest-probability modes shown per agent')
     parser.add_argument('--save_dir',   type=str, default=None,
                         help='Directory to save per-agent PNG files')
     args = parser.parse_args()
@@ -367,6 +390,7 @@ if __name__ == '__main__':
             avm=avm,
             map_radius=args.map_radius,
             max_agents=args.max_agents,
+            max_modes=args.max_modes,
             save_dir=args.save_dir,
             sample_idx=args.sample_idx,
         )
