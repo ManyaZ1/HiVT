@@ -61,6 +61,18 @@ expand for modes: shape -> [F, N, D]
 **global_emb**: [F, N, D] — per-mode global embedding from the global interactor.
 
 ### code breakdown for decoder input processing
+#### forward pass
+**returns** loc,pi
+shapes: [F, N, H, 4], [N, F] or  [F, N, H, 2], [N, F]
+
+**Step 1**:
+```python 
+pi = self.pi(torch.cat((local_embed.expand(self.num_modes, *local_embed.shape),
+                                global_embed), dim=-1)).squeeze(-1).t()
+```
+**self.pi** is a **neural network** that outputs **one logit per mode**. **pi** represents mode probabilities—the predicted likelihood of each trajectory mode.
+
+
 1. expand local embed
 2. concatenate along feature dimension: [F, N, 2D]
 ```python
@@ -69,30 +81,43 @@ torch.cat((local_embed.expand(self.num_modes, *local_embed.shape),
 ```
 (example If local_embed is [N=32, D=64] and global_embed is [6, 32, 64]: After expand: local becomes [6, 32, 64], After cat along dim=-1: result is [6, 32, 128] [MODES, AGENTS, 2*FEATURES])
 
-3. Sequential layer 
-```python
-pi = self.pi(torch.cat((local_embed.expand(self.num_modes, *local_embed.shape),
-                                global_embed), dim=-1)).squeeze(-1).t()
-```
-**final layer** is nn.Linear(..., 1)        
-#### Results
-Feeding a tensor of shape [F, N, feat] produces output shape [F, N, 1] (one scalar logit per (mode, agent)).
+3. Sequential layer self.pi is defined in [models/decoder.py](models/decoder.py#L121) as:
 
+**final layer** is nn.Linear(..., 1)        
+**Results**
+Feeding a tensor of shape [F, N, feat] produces output shape [F, N, 1] (one scalar logit per (mode, agent)).
 - `.squeeze(-1).t():` removes the trailing size-1 dimension → [F, N]
 - .t() transposes the last two dims → [N, F]
 
 Final pi is shape [N, F]: one logit per agent per mode (agents as rows, modes as columns).
 
 ---
-
-
+**Step 2**:
+```python
 out = self.aggr_embed(torch.cat((global_embed, local_embed.expand(self.num_modes, *local_embed.shape)), dim=-1))
+```
 
+1. For each mode-agent pair, you get one combined feature vector.
+2. pass through [self.aggr_embed](models/decoder.py#L106-109) **sequential MLP** to produce predicted trajectories for each mode:
+Output out shape is [F, N, hidden_size]
 
+*Question* 2 seperate MLPs find trajectories and probabilities. how is th trajectory related to the probability then?
+they are coupled through training (regression loss, classification loss) but not explicitly in the architecture. The global embedding influences both, so it can learn to produce features that lead to accurate trajectories and correct mode probabilities.
 
+***Step 3**:
+```python
+loc = self.loc(out).view(self.num_modes, -1, self.future_steps, 2)  # [F, N, H, 2]
+```
+1. Pass the combined features through another MLP (`self.loc`) to loc
+2. self.loc is defined in [models/decoder.py](models/decoder.py#L110) as a sequential MLP that outputs `future_steps * 2` values per mode-agent pair (x and y for each future step).
+2. Reshape the output to [F, N, H, 2], where H is the number of trajectory heads (e.g., 6) and 2 corresponds to (x, y) coordinates. `.view(self.num_modes, -1, self.future_steps, 2)`
+ 
+ loc is the predicted trajectory mean/location for each mode-agent-timestep.
 
+Shape [F, N, H, 2] means: for each of the 6 modes, for each of 32 agents, for each of 30 future timesteps, you get an (x, y) coordinate.
 
-
+So if F=6, N=32, H=30, then [6, 32, 30, 2] represents 6 different 30-step trajectories per agent.
+ 
   ---
 
 ## How forward / training / validation work (brief)

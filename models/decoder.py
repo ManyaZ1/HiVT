@@ -112,7 +112,7 @@ class MLPDecoder(nn.Module):
             nn.LayerNorm(self.hidden_size),
             nn.ReLU(inplace=True),
             nn.Linear(self.hidden_size, self.future_steps * 2))
-        if uncertain:
+        if uncertain:                                           #uncertain=True by hivt.py
             self.scale = nn.Sequential(
                 nn.Linear(self.hidden_size, self.hidden_size),
                 nn.LayerNorm(self.hidden_size),
