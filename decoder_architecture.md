@@ -302,6 +302,11 @@ Output:
 The decoder is implemented as `MLPDecoder` in [models/decoder.py](models/decoder.py#L87). It takes the global embeddings (which are mode-specific) and produces:
 - `y_hat`: predicted future trajectories of shape [F, N, T, D]
 - `pi`: predicted mode probabilities of shape [N, F]
+<<<<<<< Updated upstream
+=======
+- `F` = num_modes (default 6)
+- `loc` = predicted trajectory mean/location with shape [F, N, T, 2] where N 
+>>>>>>> Stashed changes
 
 ### input to decoder
 
@@ -368,4 +373,13 @@ Shape [F, N, H, 2] means: for each of the 6 modes, for each of 32 agents, for ea
 
 So if F=6, N=32, H=30, then [6, 32, 30, 2] represents 6 different 30-step trajectories per agent.
  
+<<<<<<< Updated upstream
   ---
+=======
+ **step 4**: If `self.uncertain` is True, the model also predicts uncertainty (scale) for each trajectory point:
+  
+  
+  
+  ---
+
+>>>>>>> Stashed changes
