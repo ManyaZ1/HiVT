@@ -112,3 +112,8 @@ venv.bak/
 lightning_logs/
 .DS_Store
 /forecasting_sample
+teacher_outputs/
+teacher_outputs/*
+teacher_outputs/train/*
+teacher_outputs/train/1.pt
+
