@@ -1,0 +1,281 @@
+_wandb:
+    value:
+        cli_version: 0.24.2
+        e:
+            i4jbtkk2zoxrqj5br7rmi5l3u55nlkc2:
+                args:
+                    - --teacher_dir
+                    - teacher_outputs/train
+                    - --embed_dim
+                    - "64"
+                    - --lambda_task
+                    - "1.0"
+                    - --lambda_kl
+                    - "0.5"
+                    - --lambda_pi
+                    - "0.5"
+                    - --root
+                    - /home/manyazog/argoverse
+                    - --max_epochs
+                    - "64"
+                    - --gpus
+                    - "1"
+                    - --batch_size
+                    - "64"
+                    - --checkpoint_every_n_epochs
+                    - "5"
+                    - --num_workers
+                    - "2"
+                codePath: train_student_kd.py
+                codePathLocal: train_student_kd.py
+                cpu_count: 4
+                cpu_count_logical: 8
+                cudaVersion: "13.1"
+                disk:
+                    /:
+                        total: "1081101176832"
+                        used: "762674360320"
+                email: up1096060@ac.upatras.gr
+                executable: /home/manyazog/miniconda3/envs/HiVT/bin/python
+                git:
+                    commit: d42678ffb55b5be77f7bf52dd4a05bc377ab52f1
+                    remote: https://github.com/ManyaZ1/HiVT
+                gpu: NVIDIA GeForce RTX 2060 SUPER
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Turing
+                      memoryTotal: "8589934592"
+                      name: NVIDIA GeForce RTX 2060 SUPER
+                      uuid: GPU-25de88de-7a11-a69b-d38e-8ba1a43b082e
+                host: DESKTOP-QK5E7F8
+                memory:
+                    total: "12543287296"
+                os: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.17
+                program: train_student_kd.py
+                python: CPython 3.8.20
+                root: /home/manyazog/HiVT
+                startedAt: "2026-05-28T14:35:30.095271Z"
+                writerId: i4jbtkk2zoxrqj5br7rmi5l3u55nlkc2
+        m:
+            - "1": trainer/global_step
+              "6":
+                - 3
+              "7": []
+            - "2": '*'
+              "5": 1
+              "6":
+                - 1
+              "7": []
+        python_version: 3.8.20
+        t:
+            "1":
+                - 1
+                - 5
+                - 9
+                - 50
+                - 51
+                - 53
+                - 77
+            "2":
+                - 1
+                - 5
+                - 9
+                - 50
+                - 51
+                - 53
+                - 77
+            "3":
+                - 7
+                - 13
+                - 16
+                - 66
+            "4": 3.8.20
+            "5": 0.24.2
+            "12": 0.24.2
+            "13": linux-x86_64
+T_max:
+    value: 64
+accelerator:
+    value: None
+accumulate_grad_batches:
+    value: None
+amp_backend:
+    value: native
+amp_level:
+    value: None
+auto_lr_find:
+    value: false
+auto_scale_batch_size:
+    value: false
+auto_select_gpus:
+    value: false
+batch_size:
+    value: 64
+benchmark:
+    value: false
+check_val_every_n_epoch:
+    value: 1
+checkpoint_callback:
+    value: None
+checkpoint_every_n_epochs:
+    value: 5
+compression_ratio:
+    value: 3.918142734044621
+data_root:
+    value: None
+default_root_dir:
+    value: None
+detect_anomaly:
+    value: false
+deterministic:
+    value: false
+devices:
+    value: None
+dropout:
+    value: 0.1
+edge_dim:
+    value: 2
+embed_dim:
+    value: 64
+enable_checkpointing:
+    value: true
+enable_model_summary:
+    value: true
+enable_progress_bar:
+    value: true
+fast_dev_run:
+    value: false
+flush_logs_every_n_steps:
+    value: None
+future_steps:
+    value: 30
+gpus:
+    value: 1
+gradient_clip_algorithm:
+    value: None
+gradient_clip_val:
+    value: None
+historical_steps:
+    value: 20
+ipus:
+    value: None
+lambda_kl:
+    value: 0.5
+lambda_pi:
+    value: 0.5
+lambda_task:
+    value: 1
+limit_predict_batches:
+    value: 1
+limit_test_batches:
+    value: 1
+limit_train_batches:
+    value: 1
+limit_val_batches:
+    value: 1
+local_radius:
+    value: 50
+log_every_n_steps:
+    value: 50
+log_gpu_memory:
+    value: None
+logger:
+    value: true
+lr:
+    value: 0.0005
+max_epochs:
+    value: 64
+max_steps:
+    value: -1
+max_time:
+    value: None
+min_epochs:
+    value: None
+min_steps:
+    value: None
+move_metrics_to_cpu:
+    value: false
+multiple_trainloader_mode:
+    value: max_size_cycle
+node_dim:
+    value: 2
+num_global_layers:
+    value: 3
+num_heads:
+    value: 8
+num_modes:
+    value: 6
+num_nodes:
+    value: 1
+num_processes:
+    value: 1
+num_sanity_val_steps:
+    value: 2
+num_temporal_layers:
+    value: 4
+num_workers:
+    value: 2
+overfit_batches:
+    value: 0
+parallel:
+    value: false
+persistent_workers:
+    value: true
+pin_memory:
+    value: true
+plugins:
+    value: None
+precision:
+    value: 32
+prepare_data_per_node:
+    value: None
+process_position:
+    value: 0
+profiler:
+    value: None
+progress_bar_refresh_rate:
+    value: None
+reload_dataloaders_every_epoch:
+    value: false
+reload_dataloaders_every_n_epochs:
+    value: 0
+replace_sampler_ddp:
+    value: true
+resume_from_checkpoint:
+    value: None
+root:
+    value: /home/manyazog/argoverse
+rotate:
+    value: true
+shuffle:
+    value: true
+stochastic_weight_avg:
+    value: false
+strategy:
+    value: None
+student_params:
+    value: 653369
+sync_batchnorm:
+    value: false
+teacher_dir:
+    value: teacher_outputs/train
+teacher_params:
+    value: 2559993
+terminate_on_nan:
+    value: None
+tpu_cores:
+    value: None
+track_grad_norm:
+    value: -1
+train_batch_size:
+    value: 32
+val_batch_size:
+    value: 32
+val_check_interval:
+    value: 1
+weight_decay:
+    value: 0.0001
+weights_save_path:
+    value: None
+weights_summary:
+    value: top

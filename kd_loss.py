@@ -5,9 +5,11 @@ Knowledge distillation loss for HiVT output distributions.
 Operates on Laplace mixture outputs from the MLPDecoder.
 
 All tensors use the HiVT decoder convention:
-    loc   : [F, N, H, 2]   Laplace means
-    scale : [F, N, H, 2]   Laplace scales  (already >= min_scale, no softplus needed)
-    pi    : [N, F]          raw logits  (pre-softmax)
+    loc   : [B, F, H, 2]    Laplace means
+    scale : [B, F, H, 2]    Laplace scales  (already >= min_scale, no softplus needed)
+    pi    : [B, F]          raw logits  (pre-softmax)
+
+The loss also accepts unbatched tensors shaped like [F, H, 2] and [F].
 
 where F=num_modes, N=num_agents, H=future_steps.
 """
@@ -53,29 +55,39 @@ class HiVTKDLoss(nn.Module):
         scale_t: torch.Tensor,   # [F, N, H, 2]
         pi_t:    torch.Tensor,   # [N, F]
     ):
+        if loc_s.dim() == 3:
+            loc_s = loc_s.unsqueeze(0)
+            scale_s = scale_s.unsqueeze(0)
+        if loc_t.dim() == 3:
+            loc_t = loc_t.unsqueeze(0)
+            scale_t = scale_t.unsqueeze(0)
+        if pi_s.dim() == 1:
+            pi_s = pi_s.unsqueeze(0)
+        if pi_t.dim() == 1:
+            pi_t = pi_t.unsqueeze(0)
+
         # ------------------------------------------------------------------ #
         # 1. Per-mode Laplace KL
         #    torch.distributions computes the closed-form KL:
         #    KL(Lap(μ_T,b_T) || Lap(μ_S,b_S)) =
         #        log(b_S/b_T) + (b_T/b_S)*exp(-|μ_T-μ_S|/b_T) + |μ_T-μ_S|/b_S - 1
         # ------------------------------------------------------------------ #
-        teacher_dist = D.Laplace(loc_t, scale_t)          # [F, N, H, 2]
-        student_dist = D.Laplace(loc_s, scale_s)          # [F, N, H, 2]
+        teacher_dist = D.Laplace(loc_t, scale_t)          # [B, F, H, 2]
+        student_dist = D.Laplace(loc_s, scale_s)          # [B, F, H, 2]
 
-        # kl shape: [F, N, H, 2]  — sum/mean over H and xy
+        # kl shape: [B, F, H, 2]  — sum/mean over H and xy
         kl = D.kl_divergence(teacher_dist, student_dist)  # [F, N, H, 2]
-        kl_per_mode = kl.mean(dim=(-1, -2))               # [F, N]
+        kl_per_mode = kl.mean(dim=(-1, -2))               # [B, F]
 
         # Weight each mode by teacher's soft mode probability
-        pi_t_soft = torch.softmax(pi_t, dim=-1)           # [N, F]
-        # pi_t_soft.T : [F, N]
-        kl_loss = (pi_t_soft.T * kl_per_mode).sum(dim=0).mean()  # scalar
+        pi_t_soft = torch.softmax(pi_t, dim=-1)           # [B, F]
+        kl_loss = (pi_t_soft * kl_per_mode).sum(dim=-1).mean()   # scalar
 
         # ------------------------------------------------------------------ #
         # 2. Mode probability cross-entropy
         #    CE( π_S , π_T_soft )  — student log-probs vs teacher soft targets
         # ------------------------------------------------------------------ #
-        log_pi_s  = F.log_softmax(pi_s, dim=-1)           # [N, F]
+        log_pi_s = F.log_softmax(pi_s, dim=-1)            # [B, F]
         pi_ce_loss = -(pi_t_soft * log_pi_s).sum(dim=-1).mean()   # scalar
 
         total = self.lambda_kl * kl_loss + self.lambda_pi * pi_ce_loss
