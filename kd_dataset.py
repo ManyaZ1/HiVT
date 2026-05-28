@@ -68,9 +68,14 @@ class KDDataset(torch.utils.data.Dataset):
 
         teacher = torch.load(teacher_path, map_location="cpu")
 
-        data.teacher_loc   = teacher["loc"]    # [F, H, 2]
-        data.teacher_scale = teacher["scale"]  # [F, H, 2]
-        data.teacher_pi    = teacher["pi"]     # [F]
+        # Add an explicit batch axis so PyG collation produces [B, F, ...]
+        # instead of flattening modes into a single [B*F, ...] dimension.
+        loc = teacher["loc"]
+        scale = teacher["scale"]
+        pi = teacher["pi"]
+        data.teacher_loc = loc.unsqueeze(0) if loc.dim() == 3 else loc
+        data.teacher_scale = scale.unsqueeze(0) if scale.dim() == 3 else scale
+        data.teacher_pi = pi.unsqueeze(0) if pi.dim() == 1 else pi
         data.has_teacher   = True
 
         return data
