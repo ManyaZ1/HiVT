@@ -129,7 +129,7 @@ if __name__ == "__main__":
         mode="min",
         dirpath="kd_ckpt/best",
         filename="HiVTKD-{epoch:02d}-{val_minFDE:.2f}",
-        check_on_train_epoch_end=False,  # Only check after validation, not after training
+        #check_on_train_epoch_end=False,  # Only check after validation, not after training
     )
     periodic_checkpoint = ModelCheckpoint(
         dirpath="kd_ckpt/periodic",

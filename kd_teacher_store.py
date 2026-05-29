@@ -2,8 +2,8 @@
 kd_teacher_store.py
 
 Read teacher outputs either from a directory of per-scene .pt files or from a
-single indexed HDF5 cache. The store is designed to be opened lazily inside
-each DataLoader worker.
+single indexed HDF5 cache. HDF5 caches are preloaded into RAM so training does
+not perform random disk reads for every sample.
 """
 
 from collections import OrderedDict
@@ -22,6 +22,8 @@ class TeacherStore:
         self._cache = OrderedDict()
         self._h5_file = None
         self._hdf5_keys = None
+        if self.is_hdf5 and self.path.exists():
+            self._preload_hdf5()
 
     def close(self):
         if self._h5_file is not None:
@@ -42,7 +44,7 @@ class TeacherStore:
     def load(self, seq_id) -> Optional[Dict[str, torch.Tensor]]:
         key = str(seq_id)
 
-        if self.cache_size > 0 and key in self._cache:
+        if key in self._cache:
             self._cache.move_to_end(key)
             return self._cache[key]
 
@@ -82,6 +84,18 @@ class TeacherStore:
         if self._hdf5_keys is None:
             h5_file = self._open_hdf5()
             self._hdf5_keys = {key for key in h5_file.keys() if key != "_meta"}
+
+    def _preload_hdf5(self):
+        h5_file = self._open_hdf5()
+        self._hdf5_keys = {key for key in h5_file.keys() if key != "_meta"}
+        for key in self._hdf5_keys:
+            group = h5_file[key]
+            self._cache[key] = {
+                "loc": torch.from_numpy(group["loc"][()]),
+                "scale": torch.from_numpy(group["scale"][()]),
+                "pi": torch.from_numpy(group["pi"][()]),
+            }
+        self.close()
 
     def _resolve_hdf5_key(self, key: str):
         self._ensure_hdf5_keys()
