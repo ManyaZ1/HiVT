@@ -117,3 +117,4 @@ teacher_outputs/*
 teacher_outputs/train/*
 teacher_outputs/train/1.pt
 
+wandb/run-20260529_131430-llmqustu/run-llmqustu.wandb
