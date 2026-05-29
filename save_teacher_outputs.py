@@ -60,6 +60,17 @@ def count_parameters(model: torch.nn.Module) -> dict:
     return {"total": total, "trainable": trainable}
 
 
+def normalize_seq_id(seq_id) -> str:
+    if isinstance(seq_id, torch.Tensor):
+        if seq_id.numel() == 1:
+            seq_id = seq_id.item()
+        else:
+            seq_id = seq_id.tolist()
+    if isinstance(seq_id, (list, tuple)) and len(seq_id) == 1:
+        seq_id = seq_id[0]
+    return str(seq_id)
+
+
 def sanity_check(out_dir: Path, n_samples: int) -> dict:
     """
     Load a random subset of saved files and compute basic distribution stats.
@@ -161,7 +172,8 @@ def main():
         N = len(seq_ids)
 
         for i in range(N):
-            out_path = out_dir / f"{seq_ids[i]}.pt"
+            seq_id = normalize_seq_id(seq_ids[i])
+            out_path = out_dir / f"{seq_id}.pt"
 
             if out_path.exists():
                 skipped += 1
@@ -173,7 +185,7 @@ def main():
 
             torch.save(
                 {
-                    "seq_id": seq_ids[i],
+                    "seq_id": seq_id,
                     "loc":    scene_loc,
                     "scale":  scene_scale,
                     "pi":     scene_pi,

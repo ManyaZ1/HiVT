@@ -1,7 +1,14 @@
+
+
 # HiVT: Hierarchical Vector Transformer for Multi-Agent Motion Prediction
 This repository contains the official implementation of [HiVT: Hierarchical Vector Transformer for Multi-Agent Motion Prediction](https://openaccess.thecvf.com/content/CVPR2022/papers/Zhou_HiVT_Hierarchical_Vector_Transformer_for_Multi-Agent_Motion_Prediction_CVPR_2022_paper.pdf) published in CVPR 2022.
 
 ![](assets/overview.png)
+
+# kd time
+```bash
+ python train_student_kd.py   --teacher_dir teacher_outputs/train.h5   --root ~/argoverse   --embed_dim 64   --max_epochs 64   --batch_size 32   --num_workers 8   --persistent_workers True   --lambda_task 1.0   --lambda_kl 0.5   --lambda_pi 0.5
+ ```
 
 ## Gettting Started
 
