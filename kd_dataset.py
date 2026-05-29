@@ -4,8 +4,11 @@ kd_dataset.py
 Wraps ArgoverseV1Dataset to attach pre-saved teacher soft targets
 to each Data object before it enters the student training loop.
 
-The teacher .pt files are written by save_teacher_outputs.py:
+The teacher cache can be either a directory of .pt files written by
+save_teacher_outputs.py:
     teacher_outputs/train/<seq_id>.pt
+or a single indexed HDF5 file written by prepare_teacher_cache.py:
+    teacher_outputs/train.h5
     {
         "seq_id": str,
         "loc":    Tensor [F, H, 2],
@@ -23,6 +26,8 @@ from pathlib import Path
 
 import torch
 from torch_geometric.data import Data
+
+from kd_teacher_store import TeacherStore
 
 
 class KDDataset(torch.utils.data.Dataset):
@@ -43,6 +48,7 @@ class KDDataset(torch.utils.data.Dataset):
     def __init__(self, base_dataset, teacher_dir: str):
         self.base       = base_dataset
         self.teacher_dir = Path(teacher_dir)
+        self.teacher_store = TeacherStore(self.teacher_dir, cache_size=1024)
         self._missing_warned = set()   # warn once per missing seq_id
 
     def __len__(self):
@@ -52,12 +58,10 @@ class KDDataset(torch.utils.data.Dataset):
         data = self.base[idx]           # torch_geometric Data
         seq_id = data.seq_id
 
-        teacher_path = self.teacher_dir / f"{seq_id}.pt"
-
-        if not teacher_path.exists():
+        if not self.teacher_store.exists(seq_id):
             if seq_id not in self._missing_warned:
                 warnings.warn(
-                    f"[KDDataset] teacher file not found: {teacher_path}. "
+                    f"[KDDataset] teacher file not found for seq_id={seq_id} in {self.teacher_dir}. "
                     f"KD loss will be skipped for this seq_id.",
                     stacklevel=2,
                 )
@@ -66,16 +70,14 @@ class KDDataset(torch.utils.data.Dataset):
             data.has_teacher = False
             return data
 
-        teacher = torch.load(teacher_path, map_location="cpu")
+        teacher = self.teacher_store.load(seq_id)
+        if teacher is None:
+            data.has_teacher = False
+            return data
 
-        # Add an explicit batch axis so PyG collation produces [B, F, ...]
-        # instead of flattening modes into a single [B*F, ...] dimension.
-        loc = teacher["loc"]
-        scale = teacher["scale"]
-        pi = teacher["pi"]
-        data.teacher_loc = loc.unsqueeze(0) if loc.dim() == 3 else loc
-        data.teacher_scale = scale.unsqueeze(0) if scale.dim() == 3 else scale
-        data.teacher_pi = pi.unsqueeze(0) if pi.dim() == 1 else pi
+        data.teacher_loc   = teacher["loc"]    # [F, H, 2]
+        data.teacher_scale = teacher["scale"]  # [F, H, 2]
+        data.teacher_pi    = teacher["pi"]     # [F]
         data.has_teacher   = True
 
         return data

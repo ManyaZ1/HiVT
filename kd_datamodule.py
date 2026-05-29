@@ -15,6 +15,7 @@ from torch_geometric.data import DataLoader as PyGDataLoader
 
 from datasets import ArgoverseV1Dataset             # your existing dataset
 from kd_dataset import KDDataset                    # the wrapper we wrote
+from kd_teacher_store import TeacherStore
 
 
 class KDDataModule(pl.LightningDataModule):
@@ -39,28 +40,32 @@ class KDDataModule(pl.LightningDataModule):
         self._kwargs = kwargs   # forward the rest to ArgoverseV1Dataset
 
     def prepare_data(self):
+        print(f"Preparing Argoverse datasets under {self.root} ...")
         ArgoverseV1Dataset(root=self.root, split="train", local_radius=self.local_radius)
         ArgoverseV1Dataset(root=self.root, split="val", local_radius=self.local_radius)
+        print("Dataset preprocessing complete.")
 
     def _validate_teacher_cache(self, dataset):
         if self.teacher_dir is None:
             return
-        teacher_dir = Path(self.teacher_dir)
+        store = TeacherStore(self.teacher_dir, cache_size=0)
+        print(f"Validating teacher cache at {self.teacher_dir} for {len(dataset.processed_paths)} training scenes ...")
         missing = []
         for processed_path in dataset.processed_paths:
             seq_id = Path(processed_path).stem
-            teacher_path = teacher_dir / f"{seq_id}.pt"
-            if not teacher_path.exists():
-                missing.append(str(teacher_path))
+            if not store.exists(seq_id):
+                missing.append(str(seq_id))
                 if len(missing) >= 20:
                     break
         if missing:
             raise FileNotFoundError(
-                "Teacher cache is incomplete. Missing files include: "
+                "Teacher cache is incomplete. Missing seq_ids include: "
                 + ", ".join(missing)
             )
+        print("Teacher cache validation passed.")
 
     def setup(self, stage=None):
+        print("Building KD datasets ...")
         base_train = ArgoverseV1Dataset(
             root=self.root,
             split="train",
@@ -78,6 +83,7 @@ class KDDataModule(pl.LightningDataModule):
             transform=self.val_transform,
             local_radius=self.local_radius,
         )
+        print("KD datasets ready.")
 
     def train_dataloader(self):
         return PyGDataLoader(
@@ -131,6 +137,7 @@ class KDDataModule(pl.LightningDataModule):
                      help="Save periodic checkpoint every N epochs")
         # Teacher cache directory
         add_argument("--teacher_dir", type=str, default=None)
+        # Can point to either a directory of .pt files or a single .h5 file.
         return parser
 
     @classmethod
