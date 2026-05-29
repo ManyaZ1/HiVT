@@ -118,3 +118,8 @@ teacher_outputs/train/*
 teacher_outputs/train/1.pt
 
 wandb/run-20260529_131430-llmqustu/run-llmqustu.wandb
+wandb/run-20260529_131430-llmqustu/files/wandb-summary.json
+.gitignore
+wandb/run-20260529_131430-llmqustu/files/config.yaml
+wandb/run-20260529_131430-llmqustu/run-llmqustu.wandb
+wandb/run-20260529_131430-llmqustu/run-llmqustu.wandb
