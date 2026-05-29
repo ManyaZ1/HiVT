@@ -24,7 +24,6 @@ Usage:
 import warnings
 from pathlib import Path
 
-import h5py
 import torch
 from torch_geometric.data import Data
 
@@ -49,37 +48,11 @@ class KDDataset(torch.utils.data.Dataset):
     def __init__(self, base_dataset, teacher_dir: str):
         self.base       = base_dataset
         self.teacher_dir = Path(teacher_dir)
-        self.teacher_store = None
-        self.teacher_records = None
-        if self.teacher_dir.suffix.lower() in {".h5", ".hdf5"}:
-            self.teacher_records = self._load_hdf5_records(self.teacher_dir)
-        else:
-            self.teacher_store = TeacherStore(self.teacher_dir, cache_size=1024)
+        self.teacher_store = TeacherStore(self.teacher_dir, cache_size=1024)
         self._missing_warned = set()   # warn once per missing seq_id
-
-    def _load_hdf5_records(self, teacher_path: Path):
-        if not teacher_path.exists():
-            return {}
-
-        records = {}
-        with h5py.File(teacher_path, "r") as h5_file:
-            for key in h5_file.keys():
-                if key == "_meta":
-                    continue
-                group = h5_file[key]
-                records[str(key)] = {
-                    "loc": torch.from_numpy(group["loc"][()]),
-                    "scale": torch.from_numpy(group["scale"][()]),
-                    "pi": torch.from_numpy(group["pi"][()]),
-                }
-        return records
 
     def _load_teacher(self, seq_id):
         key = str(seq_id)
-        if self.teacher_records is not None:
-            return self.teacher_records.get(key)
-        if self.teacher_store is None:
-            return None
         return self.teacher_store.load(key)
 
     def __len__(self):
