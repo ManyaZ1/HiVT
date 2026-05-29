@@ -176,12 +176,25 @@ class HiVTKD(pl.LightningModule):
     # Validation step — identical to base HiVT (no KD at val time)
     # ---------------------------------------------------------------------- #
     def validation_step(self, data, batch_idx):
-        # Delegate fully to the student's own validation logic
-        return self.student.validation_step(data, batch_idx)
+        y_hat, pi = self(data)
+        reg_mask = ~data['padding_mask'][:, self.student.historical_steps:]
+        l2_norm = (torch.norm(y_hat[:, :, :, :2] - data.y, p=2, dim=-1) * reg_mask).sum(dim=-1)
+        best_mode = l2_norm.argmin(dim=0)
+        y_hat_best = y_hat[best_mode, torch.arange(data.num_nodes)]
+        reg_loss = self.student.reg_loss(y_hat_best[reg_mask], data.y[reg_mask])
+        self.log("val_reg_loss", reg_loss, prog_bar=True, on_step=False, on_epoch=True, batch_size=1)
 
-    def validation_epoch_end(self, outputs):
-        # Aggregate and log the same metrics as base HiVT
-        return self.student.validation_epoch_end(outputs)
+        y_hat_agent = y_hat[:, data['agent_index'], :, :2]
+        y_agent = data.y[data['agent_index']]
+        fde_agent = torch.norm(y_hat_agent[:, :, -1] - y_agent[:, -1], p=2, dim=-1)
+        best_mode_agent = fde_agent.argmin(dim=0)
+        y_hat_best_agent = y_hat_agent[best_mode_agent, torch.arange(data.num_graphs)]
+        self.student.minADE.update(y_hat_best_agent, y_agent)
+        self.student.minFDE.update(y_hat_best_agent, y_agent)
+        self.student.minMR.update(y_hat_best_agent, y_agent)
+        self.log("val_minADE", self.student.minADE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log("val_minFDE", self.student.minFDE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log("val_minMR", self.student.minMR, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
 
     # ---------------------------------------------------------------------- #
     # Optimiser / scheduler — reuse student's configuration
