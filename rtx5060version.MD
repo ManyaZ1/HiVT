@@ -79,7 +79,7 @@ change `return torch.load(self.processed_paths[idx])` to
 `return torch.load(self.processed_paths[idx], weights_only=False)`
 
 **change**
-in HiVT/utils.py
+### in HiVT/utils.py
 TemporalData.__inc__() 
 🔍 Find this method:
 `def __inc__(self, key, value):`
@@ -87,7 +87,7 @@ TemporalData.__inc__()
 `def __inc__(self, key, value, *args, **kwargs):`
 
 
-in HiVT/models/local_encoder.py
+### in HiVT/models/local_encoder.py
 🔍 Find:
 `def forward(self, ...):`
 ✏️ Change it to:
