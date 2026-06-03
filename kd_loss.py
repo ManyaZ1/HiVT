@@ -66,6 +66,14 @@ class HiVTKDLoss(nn.Module):
         if pi_t.dim() == 1:
             pi_t = pi_t.unsqueeze(0)
 
+        # Fail fast if batching or indexing produced mismatched tensors.
+        assert loc_s.shape == loc_t.shape, f"Shape mismatch: {loc_s.shape} vs {loc_t.shape}"
+        assert scale_s.shape == scale_t.shape, f"Shape mismatch: {scale_s.shape} vs {scale_t.shape}"
+        assert pi_s.shape == pi_t.shape, f"Shape mismatch: {pi_s.shape} vs {pi_t.shape}"
+        assert pi_s.shape[-1] == loc_s.shape[1], (
+            f"Mode mismatch: pi has {pi_s.shape[-1]} modes but loc has {loc_s.shape[1]}"
+        )
+
         # ------------------------------------------------------------------ #
         # 1. Per-mode Laplace KL
         #    torch.distributions computes the closed-form KL:
