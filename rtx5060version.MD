@@ -82,13 +82,13 @@ change `return torch.load(self.processed_paths[idx])` to
 in HiVT/utils.py
 TemporalData.__inc__() 
 🔍 Find this method:
-def __inc__(self, key, value):
+`def __inc__(self, key, value):`
 ✏️ Change it to:
-def __inc__(self, key, value, *args, **kwargs):
+`def __inc__(self, key, value, *args, **kwargs):`
 
 
 in HiVT/models/local_encoder.py
 🔍 Find:
-def forward(self, ...):
+`def forward(self, ...):`
 ✏️ Change it to:
-def forward(self, ..., is_causal=False, **kwargs):
+`def forward(self, ..., is_causal=False, **kwargs):`
