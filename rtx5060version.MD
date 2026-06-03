@@ -88,6 +88,7 @@ TemporalData.__inc__()
 
 
 ### in HiVT/models/local_encoder.py
+**TemporalEncoderLayer**
 🔍 Find:
 `def forward(self, ...):`
 ✏️ Change it to:
