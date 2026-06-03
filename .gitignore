@@ -112,3 +112,4 @@ venv.bak/
 lightning_logs/
 .DS_Store
 /forecasting_sample
+wandb/latest-run
