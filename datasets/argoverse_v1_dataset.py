@@ -84,7 +84,7 @@ class ArgoverseV1Dataset(Dataset):
         return len(self._raw_file_names)
 
     def get(self, idx) -> Data:
-        return torch.load(self.processed_paths[idx])
+        return torch.load(self.processed_paths[idx], weights_only=False)
 
 
 def process_argoverse(split: str,
