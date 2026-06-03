@@ -65,9 +65,13 @@ in `HiVT/models/hivt.py`
 change `return [optimizer], [scheduler]` to:
 ```python
 return {
-    "optimizer": optimizer,
-    "lr_scheduler": scheduler,
-}
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "epoch",
+                "monitor": "val_loss"
+            }
+        }
 ```
 
 ### HiVT/datasets/argoverse_v1_dataset.py
