@@ -17,7 +17,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from models.hivt import HiVT          # your existing HiVT LightningModule
-from kd_loss import HiVTKDLoss        # the file we wrote above
+from .kd_loss import HiVTKDLoss        # the file we wrote above
 
 
 def _count_parameters(model: nn.Module) -> Dict[str, int]:
@@ -98,66 +98,32 @@ class HiVTKD(pl.LightningModule):
             hasattr(data, attr) for attr in ("teacher_loc", "teacher_scale", "teacher_pi")
         )
         kd_logs     = {}
-
         if has_teacher:
-            agent_index = data.agent_index
-            if isinstance(agent_index, torch.Tensor) and agent_index.dim() == 0:
-                agent_index = agent_index.unsqueeze(0)
+            agent_index = data.agent_index                          # [B]
 
-            # Teacher cache stores one distribution per scene's focal agent.
-            # Match that by selecting the student focal-agent predictions.
-            student_loc = pred_s[:, agent_index, :, :2]
-            student_scale = pred_s[:, agent_index, :, 2:]
-            student_pi = pi_s[agent_index]
-            if student_loc.dim() == 3:
-                student_loc = student_loc.unsqueeze(0)
-                student_scale = student_scale.unsqueeze(0)
-                student_pi = student_pi.unsqueeze(0)
-            else:
-                student_loc = student_loc.permute(1, 0, 2, 3).contiguous()
-                student_scale = student_scale.permute(1, 0, 2, 3).contiguous()
+            # Student focal-agent slice — straight from decoder, no permute yet
+            student_loc   = pred_s[:, agent_index, :, :2]          # [F, B, H, 2]
+            student_scale = pred_s[:, agent_index, :, 2:]          # [F, B, H, 2]
+            student_pi    = pi_s[agent_index]                       # [B, F]
 
-            # Teacher targets — detach: no gradient flows back to teacher files
-            loc_t = data.teacher_loc.to(self.device)
-            scale_t = data.teacher_scale.to(self.device)
-            pi_t = data.teacher_pi.to(self.device)
+            # Teacher — PyG stacked via __cat_dim__=None → [B, F, H, 2]
+            # Permute to match HiVT decoder convention [F, B, H, 2]
+            loc_t   = data.teacher_loc.permute(1, 0, 2, 3)         # [B,F,H,2] → [F,B,H,2]
+            scale_t = data.teacher_scale.permute(1, 0, 2, 3)       # [B,F,H,2] → [F,B,H,2]
+            pi_t    = data.teacher_pi                               # [B,F] — no change needed
 
-            # Align teacher tensors to student focal-agent layout [B, F, H, 2] and [B, F].
-            target_b, target_f, target_h, target_xy = student_loc.shape
-
-            if loc_t.dim() == 3:
-                if loc_t.size(0) == target_b * target_f and loc_t.size(1) == target_h and loc_t.size(2) == target_xy:
-                    loc_t = loc_t.view(target_b, target_f, target_h, target_xy)
-                    scale_t = scale_t.view(target_b, target_f, target_h, target_xy)
-                elif target_b == 1 and loc_t.size(0) == target_f:
-                    loc_t = loc_t.unsqueeze(0)
-                    scale_t = scale_t.unsqueeze(0)
-                else:
-                    raise RuntimeError(
-                        f"Unexpected teacher tensor shape: loc={tuple(loc_t.shape)}; "
-                        f"expected [B,F,H,2] with B={target_b}, F={target_f}, H={target_h}."
-                    )
-            elif loc_t.dim() == 4 and loc_t.size(0) == target_f and loc_t.size(1) == target_b:
-                loc_t = loc_t.permute(1, 0, 2, 3).contiguous()
-                scale_t = scale_t.permute(1, 0, 2, 3).contiguous()
-
-            if pi_t.dim() == 1:
-                if pi_t.numel() == target_b * target_f:
-                    pi_t = pi_t.view(target_b, target_f)
-                elif target_b == 1 and pi_t.numel() == target_f:
-                    pi_t = pi_t.unsqueeze(0)
-                else:
-                    raise RuntimeError(
-                        f"Unexpected teacher pi shape: pi={tuple(pi_t.shape)}; "
-                        f"expected [B,F] with B={target_b}, F={target_f}."
-                    )
-            elif pi_t.dim() == 2 and pi_t.size(0) == target_f and pi_t.size(1) == target_b:
-                pi_t = pi_t.t().contiguous()
+            # Sanity check before loss
+            assert student_loc.shape == loc_t.shape, \
+                f"loc mismatch: student {student_loc.shape} vs teacher {loc_t.shape}"
+            assert student_pi.shape == pi_t.shape, \
+                f"pi mismatch: student {student_pi.shape} vs teacher {pi_t.shape}"
 
             kd_loss, kd_logs = self.kd_loss_fn(
-                student_loc, student_scale, student_pi,
-                loc_t.detach(), scale_t.detach(), pi_t.detach(),
+                student_loc,          student_scale,          student_pi,
+                loc_t.detach(),       scale_t.detach(),       pi_t.detach(),
             )
+            # 🛑 ADD THIS PRINT LINE TEMPORARILY:
+            #print("ACTUAL KD LOG KEYS:", list(kd_logs.keys()))
             total_loss = self.lambda_task * task_loss + kd_loss
         else:
             total_loss = self.lambda_task * task_loss
@@ -169,7 +135,16 @@ class HiVTKD(pl.LightningModule):
         self.log("train/loss_total", total_loss, on_step=False, on_epoch=True, batch_size=self._batch_size(data))
         for k, v in kd_logs.items():
             self.log(f"train/{k}", v, on_step=False, on_epoch=True, batch_size=self._batch_size(data))
-
+        # 🛑 ADD THESE LINES RIGHT HERE BEFORE RETURN:
+        def _to_float(val):
+            if isinstance(val, torch.Tensor):
+                return float(val.detach().cpu().item())
+            return float(val) if val is not None else 0.0
+        self._last_metrics = {
+            "train/loss_task": _to_float(task_loss),
+            "train/kd/kl_laplace": _to_float(kd_logs.get("kd/kl_laplace")),
+            "train/kd/pi_ce": _to_float(kd_logs.get("kd/pi_ce"))
+        }
         return total_loss
 
     # ---------------------------------------------------------------------- #

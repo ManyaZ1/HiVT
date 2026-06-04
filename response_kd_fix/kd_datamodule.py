@@ -14,8 +14,8 @@ import pytorch_lightning as pl
 from torch_geometric.data import DataLoader as PyGDataLoader
 
 from datasets import ArgoverseV1Dataset             # your existing dataset
-from kd_dataset import KDDataset                    # the wrapper we wrote
-from kd_teacher_store import TeacherStore
+from .kd_dataset import KDDataset                    # the wrapper we wrote
+from .kd_teacher_store_fixed import TeacherStore
 
 
 class KDDataModule(pl.LightningDataModule):

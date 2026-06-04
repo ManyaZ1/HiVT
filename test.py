@@ -1,9 +1,20 @@
+# import h5py
+# with h5py.File("teacher_outputs/train.h5", "r") as f:
+#     keys = list(f.keys())
+#     print(f"Entries: {len(keys)}")
+#     sample_key = next((key for key in keys if key != "_meta"), None)
+#     if sample_key is None:
+#         raise KeyError("No scene groups found in teacher_outputs/train.h5")
+#     print(f"Sample key: {sample_key}")
+#     print(f"Sample loc shape: {f[sample_key]['loc'].shape}")
 import h5py
+
 with h5py.File("teacher_outputs/train.h5", "r") as f:
+    # Print the first 5 keys to see their format
     keys = list(f.keys())
-    print(f"Entries: {len(keys)}")
-    sample_key = next((key for key in keys if key != "_meta"), None)
-    if sample_key is None:
-        raise KeyError("No scene groups found in teacher_outputs/train.h5")
-    print(f"Sample key: {sample_key}")
-    print(f"Sample loc shape: {f[sample_key]['loc'].shape}")
+    print("Sample keys in H5 file:", keys[:5])
+    print("Type of keys:", type(keys[0]))
+
+    # Check if your specific missing ID is in there
+    print("Is string '38557' in H5?:", "38557" in f)
+    print("Is int 38557 in H5?:", 38557 in f)

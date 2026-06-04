@@ -4,8 +4,8 @@ from torch_geometric.data import DataLoader
 from datasets import ArgoverseV1Dataset
 from kd_dataset import KDDataset
 
-base = ArgoverseV1Dataset(root="data/argoverse", split="train")
-dataset = KDDataset(base, teacher_dir="teacher_outputs/train.h5")
+base = ArgoverseV1Dataset(root="/home/manya/argoverse", split="train")
+dataset = KDDataset(base, teacher_dir="/home/manya/HiVT/teacher_outputs/train.h5")
 
 # grab 2 raw items before collation
 item0 = dataset[0]
