@@ -14,10 +14,24 @@
 from argparse import ArgumentParser
 
 import pytorch_lightning as pl
+import torch
 from torch_geometric.data import DataLoader
 
 from datasets import ArgoverseV1Dataset
 from models.hivt import HiVT
+
+# PyTorch >= 2.6 defaults torch.load to weights_only=True, which fails on
+# checkpoints that pickle objects like the ModelCheckpoint callback. These are
+# our own trusted checkpoints, so restore the old behaviour.
+_orig_torch_load = torch.load
+
+
+def _torch_load(*args, **kwargs):
+    kwargs.setdefault('weights_only', False)
+    return _orig_torch_load(*args, **kwargs)
+
+
+torch.load = _torch_load
 
 if __name__ == '__main__':
     pl.seed_everything(2022)
