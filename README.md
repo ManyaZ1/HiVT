@@ -61,13 +61,16 @@ tensorboard --logdir lightning_logs/
 ## Evaluation
 
 To evaluate the prediction performance:
-```
+```bash
 python eval.py --root /path/to/dataset_root/ --batch_size 32 --ckpt_path /path/to/your_checkpoint.ckpt
 python eval.py --root /home/manyazog/argoverse --batch_size 32 --ckpt_path /home/manyazog/HiVT/checkpoints/HiVT-64/checkpoints/epoch=63-step=411903.ckpt
 
 
 
  python eval.py --root /home/manyazog/argoverse --batch_size 32 --ckpt_path /home/manyazog/HiVT/lightning_logs/version_0/checkpoints/epoch=63-step=411903.ckpt
+conda activate hivt_new
+python eval.py --root /home/manya/argoverse --batch_size 32 --ckpt_path /home/manya/HiVT/checkpoints/HiVT-128/chec
+kpoints/epoch=63-step=411903.ckpt
 ```
 
 ## Data Preprocessing

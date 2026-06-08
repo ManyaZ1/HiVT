@@ -112,3 +112,10 @@ venv.bak/
 lightning_logs/
 .DS_Store
 /forecasting_sample
+
+# Weights & Biases
+wandb/
+
+# Large data / teacher outputs
+*.h5
+teacher_outputs/
