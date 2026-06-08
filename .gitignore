@@ -125,3 +125,11 @@ wandb/run-20260529_131430-llmqustu/run-llmqustu.wandb
 wandb/run-20260529_131430-llmqustu/run-llmqustu.wandb
 teacher_test_tmp.pt
 wandb/latest-run
+
+
+# Weights & Biases
+wandb/
+
+# Large data / teacher outputs
+*.h5
+teacher_outputs/
