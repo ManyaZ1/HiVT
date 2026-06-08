@@ -32,7 +32,7 @@ class KDDataModule(pl.LightningDataModule):
         self.train_batch_size = kwargs.get("train_batch_size", 32)
         self.val_batch_size   = kwargs.get("val_batch_size",   32)
         self.num_workers      = kwargs.get("num_workers",       8)
-        self.pin_memory       = kwargs.get("pin_memory",       True)
+        self.pin_memory       = kwargs.get("pin_memory",      False)
         self.persistent_workers = kwargs.get("persistent_workers", True)
         self.local_radius = kwargs.get("local_radius", 50)
         self.train_transform = kwargs.get("train_transform")
@@ -127,13 +127,13 @@ class KDDataModule(pl.LightningDataModule):
         add_argument("--val_batch_size", type=int, default=32)
         add_argument("--shuffle", type=bool, default=True)
         add_argument("--num_workers", type=int, default=8)
-        add_argument("--pin_memory", type=bool, default=True)
+        add_argument("--pin_memory", type=bool, default=False)
         add_argument("--persistent_workers", type=bool, default=True)
         # local_radius is already provided by HiVT.add_model_specific_args.
         # Keep the parser stable by not redefining it here.
         add_argument("--batch_size", type=int, default=None,
                      help="If set, overrides train/val batch sizes")
-        add_argument("--checkpoint_every_n_epochs", type=int, default=5,
+        add_argument("--checkpoint_every_n_epochs", type=int, default=20,
                      help="Save periodic checkpoint every N epochs")
         # Teacher cache directory
         add_argument("--teacher_dir", type=str, default=None)

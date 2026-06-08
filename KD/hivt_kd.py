@@ -58,6 +58,10 @@ class HiVTKD(pl.LightningModule):
         self.lambda_kl    = kwargs.pop("lambda_kl",    0.5)
         self.lambda_pi    = kwargs.pop("lambda_pi",    0.0)
         self.teacher_dir  = kwargs.pop("teacher_dir",  None)
+        # Sanity-test knobs: strip HiVT's cosine LR schedule (which decays to ~0
+        # within a few dozen overfit steps) and optionally pin a constant LR.
+        self.sanity_constant_lr = kwargs.pop("sanity_constant_lr", False)
+        self.sanity_lr          = kwargs.pop("sanity_lr",          None)
 
         # Save ALL hparams (including the ones we popped) for wandb / ckpt
         self.save_hyperparameters()
@@ -135,6 +139,40 @@ class HiVTKD(pl.LightningModule):
         else:
             total_loss = self.lambda_task * task_loss
 
+        # ---- Trajectory metrics on the TRAIN batch (memorization signal) ----
+        # Mirrors validation_step's agent-level min-over-modes computation, but
+        # computed directly (not via the stateful self.student.min* torchmetrics,
+        # which accumulate val state). In a true single-batch overfit these
+        # should collapse toward ~0 — unlike val_minADE, which measures the full
+        # val set and stays pinned near the untrained baseline.
+        with torch.no_grad():
+            y_hat_agent = pred_s[:, data['agent_index'], :, :2]          # [K, B, H, 2]
+            y_agent = data.y[data['agent_index']]                       # [B, H, 2]
+            fde_modes = torch.norm(y_hat_agent[:, :, -1] - y_agent[:, -1], p=2, dim=-1)  # [K, B]
+            best_mode_agent = fde_modes.argmin(dim=0)                   # [B]
+            y_hat_best_agent = y_hat_agent[best_mode_agent, torch.arange(y_agent.size(0))]  # [B, H, 2]
+            fde_best = torch.norm(y_hat_best_agent[:, -1] - y_agent[:, -1], p=2, dim=-1)    # [B]
+            train_minADE = torch.norm(y_hat_best_agent - y_agent, p=2, dim=-1).mean()
+            train_minFDE = fde_best.mean()
+            train_minMR  = (fde_best > 2.0).float().mean()
+        bs = y_agent.size(0)
+        self.log("train/minADE", train_minADE, on_step=True, on_epoch=True, prog_bar=True, batch_size=bs)
+        self.log("train/minFDE", train_minFDE, on_step=True, on_epoch=True, batch_size=bs)
+        self.log("train/minMR",  train_minMR,  on_step=True, on_epoch=True, batch_size=bs)
+
+        # Scale-inflation diagnostic. pred_s[..., 2:] is the post-activation
+        # Laplace scale b (decoder applies ELU+1+min_scale, see models/decoder.py),
+        # used directly in the NLL as log(2b)+|y-loc|/b. If scale_mean climbs while
+        # train/minADE stays ~14, the loss is dropping by inflating b rather than
+        # moving the means — the Laplace-NLL scale-inflation pathology.
+        self.log("train/scale_mean", pred_s[:, data['agent_index'], :, 2:].mean(),
+                 on_step=True, on_epoch=True, prog_bar=True, batch_size=bs)
+        # Monotonic peak GPU allocation since run start — once it plateaus you've
+        # seen the densest batch and know your true VRAM headroom (see SMOKE_TESTS).
+        if torch.cuda.is_available():
+            self.log("train/gpu_peak_gb", torch.cuda.max_memory_allocated() / 1e9,
+                     on_step=True, on_epoch=False, prog_bar=True, batch_size=bs)
+
         # ---- Logging ----
         self.log("train/reg_loss", reg_loss, on_step=False, on_epoch=True, batch_size=self._batch_size(data))
         self.log("train/cls_loss", cls_loss, on_step=False, on_epoch=True, batch_size=self._batch_size(data))
@@ -181,7 +219,22 @@ class HiVTKD(pl.LightningModule):
     # Optimiser / scheduler — reuse student's configuration
     # ---------------------------------------------------------------------- #
     def configure_optimizers(self):
-        return self.student.configure_optimizers()
+        # Default: delegate to HiVT (AdamW + CosineAnnealingLR over T_max epochs).
+        if not self.sanity_constant_lr:
+            return self.student.configure_optimizers()
+
+        # Sanity-test mode: reuse the student's optimizer (keeps its weight-decay
+        # param grouping) but drop the scheduler so the LR stays constant. Under
+        # --overfit_batches one epoch == one optimizer step, so the cosine schedule
+        # (T_max in *epochs*) anneals the LR to near-zero within a few dozen steps
+        # and starves the decoder means of gradient. A constant LR lets the means
+        # actually move so the memorization check is meaningful.
+        cfg = self.student.configure_optimizers()
+        optimizer = cfg["optimizer"] if isinstance(cfg, dict) else cfg
+        if self.sanity_lr is not None:
+            for group in optimizer.param_groups:
+                group["lr"] = self.sanity_lr
+        return optimizer
 
     # ---------------------------------------------------------------------- #
     # Argparse — extend HiVT's own args with KD-specific ones
@@ -201,6 +254,15 @@ class HiVTKD(pl.LightningModule):
         parser.add_argument("--teacher_dir",  type=str,   required=True,
                             help="Directory / cache containing teacher soft targets "
                                  "(output of save_teacher_outputs.py)")
+        # Sanity-test only: bypass the cosine LR schedule for single-batch overfit.
+        parser.add_argument("--sanity_constant_lr", action="store_true",
+                            help="Drop HiVT's CosineAnnealingLR and train at a "
+                                 "constant LR. For --overfit_batches memorization "
+                                 "checks, where the schedule otherwise decays the LR "
+                                 "to ~0 within a few dozen steps.")
+        parser.add_argument("--sanity_lr", type=float, default=None,
+                            help="Constant LR to pin when --sanity_constant_lr is set "
+                                 "(default: keep HiVT's base --lr).")
         return parser
 
     # ---------------------------------------------------------------------- #

@@ -2,7 +2,7 @@ import os
 import sys
 
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 import wandb, json
 from pathlib import Path
@@ -23,10 +23,20 @@ from kd_datamodule import KDDataModule
 
 if __name__ == "__main__":
     import argparse
+    # Match train.py's seed so KD runs are reproducible and comparable to the
+    # HiVT-32 baseline (a small KD effect can otherwise be lost in init noise).
+    pl.seed_everything(2022)
     parser = argparse.ArgumentParser()
     parser = HiVTKD.add_model_specific_args(parser)   # HiVT args + KD args
     parser = KDDataModule.add_argparse_args(parser)
     parser = pl.Trainer.add_argparse_args(parser)
+    parser.add_argument("--wandb_project", type=str, default="hivt-kd",
+                        help="wandb project — the top-level folder on wandb.ai.")
+    parser.add_argument("--wandb_group", type=str, default=None,
+                        help="wandb group to bucket related runs (e.g. a lambda_kl sweep).")
+    parser.add_argument("--run_name", type=str, default=None,
+                        help="Run name; also the checkpoint subfolder under kd_ckpt/. "
+                             "Defaults to emb<E>-bs<B>-lkl<L>.")
     args = parser.parse_args()
 
     # Read teacher param count from manifest for wandb config
@@ -50,9 +60,15 @@ if __name__ == "__main__":
                 }
             }
 
+    # --batch_size -> train_batch_size mapping happens later in from_argparse_args,
+    # so read the generic flag here for naming.
+    _bs = getattr(args, "batch_size", None) or args.train_batch_size
+    run_name = args.run_name or f"emb{args.embed_dim}-bs{_bs}-lkl{args.lambda_kl}"
+
     wandb_logger = WandbLogger(
-        project="hivt-kd",
-        name=f"student64-kd-lkl{args.lambda_kl}-lpi{args.lambda_pi}",
+        project=args.wandb_project,
+        group=args.wandb_group,
+        name=run_name,
         config={
             **vars(args),
             "teacher_params": manifest["teacher_params"]["total"],
@@ -63,12 +79,12 @@ if __name__ == "__main__":
         monitor="val_minFDE",
         save_top_k=5,
         mode="min",
-        dirpath="kd_ckpt/best",
+        dirpath=f"kd_ckpt/{run_name}/best",
         filename="HiVTKD-{epoch:02d}-{val_minFDE:.2f}",
         #check_on_train_epoch_end=False,  # Only check after validation, not after training
     )
     periodic_checkpoint = ModelCheckpoint(
-        dirpath="kd_ckpt/periodic",
+        dirpath=f"kd_ckpt/{run_name}/periodic",
         filename="HiVTKD-{epoch:02d}",
         every_n_epochs=args.checkpoint_every_n_epochs,
         save_top_k=-1,
@@ -78,7 +94,8 @@ if __name__ == "__main__":
     trainer = pl.Trainer.from_argparse_args(
         args,
         logger=wandb_logger,
-        callbacks=[best_checkpoint, periodic_checkpoint],
+        callbacks=[best_checkpoint, periodic_checkpoint,
+                   LearningRateMonitor(logging_interval="epoch")],
     )
 
     model = HiVTKD(**vars(args))
