@@ -67,7 +67,7 @@ python -m KD.train_student_kd \
   --teacher_dir /home/manya/HiVT/teacher_outputs/train_fixed.h5 \
   --embed_dim 32 --lambda_task 1.0 --lambda_kl 0.5 --lambda_pi 0 \
   --data_root /home/manya/argoverse --root /home/manya/argoverse \
-  --max_epochs 64 --gpus 1 --batch_size 64 \
+  --gpus 1 --batch_size 64 \
   --checkpoint_every_n_epochs 10 
 ```
 Watch in wandb / stdout:

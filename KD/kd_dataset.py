@@ -22,12 +22,13 @@ import warnings
 from pathlib import Path
 
 import torch
-from torch_geometric.data import Data
+#from torch_geometric.data import Data # more data corruptiion from PyG: my favorite      !!!
 
+from utils import TemporalData               # repo module (absolute; repo root on sys.path)
 from kd_teacher_store import TeacherStore   # sibling KD module (flat; KD/files on sys.path)
 
 
-class KDData(Data):
+class KDData(TemporalData):
     """Data subclass that tells PyG how to batch teacher soft targets."""
 
     def __cat_dim__(self, key, value, *args, **kwargs):
