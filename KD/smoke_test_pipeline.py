@@ -29,18 +29,16 @@ import sys
 
 import torch
 
-# Run-from-anywhere bootstrap: put the repo root and this KD dir on sys.path so
-# the repo packages (datasets) and the sibling KD modules import under one flat
-# convention. See KD/files/KD_CHANGES.md.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_REPO_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
-for _p in (_REPO_ROOT, _HERE):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+# Run-from-anywhere bootstrap: ensure the repo root is on sys.path so the repo
+# packages (datasets) and the KD package import absolutely. Run as
+# `python -m KD.smoke_test_pipeline`.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
-from datasets import ArgoverseV1Dataset                 # repo module (absolute)
-from kd_teacher_store_fixed import TeacherStore          # sibling KD module (flat)
-from kd_dataset import KDDataset, KDData                 # sibling KD module (flat)
+from datasets import ArgoverseV1Dataset             # repo module (absolute)
+from KD.kd_teacher_store import TeacherStore        # sibling KD module (absolute from repo root)
+from KD.kd_dataset import KDDataset, KDData         # sibling KD module (absolute from repo root)
 
 
 def _ok(msg):   print(f"  PASS  {msg}")

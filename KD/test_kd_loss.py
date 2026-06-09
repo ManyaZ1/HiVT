@@ -2,7 +2,7 @@
 test_kd_loss.py
 
 Unit tests for the permutation-invariant mixture-NLL KD loss.
-Run from the repo root:  python KD/files/test_kd_loss.py
+Run from the repo root:  python -m KD.test_kd_loss
 (The underlying math was already verified in numpy; this checks the torch
 implementation, autograd, and the scale guard.)
 """
@@ -12,15 +12,13 @@ import sys
 
 import torch
 
-# Run-from-anywhere bootstrap: put this KD dir on sys.path so the sibling KD
-# modules import under one flat convention. See KD/files/KD_CHANGES.md.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_REPO_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
-for _p in (_REPO_ROOT, _HERE):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+# Run-from-anywhere bootstrap: ensure the repo root is on sys.path so the KD
+# package imports absolutely. Run as `python -m KD.test_kd_loss`.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
-from kd_loss import HiVTKDLoss     # sibling KD module (flat; KD/files on sys.path)
+from KD.kd_loss import HiVTKDLoss  # sibling KD module (absolute from repo root)
 
 torch.manual_seed(0)
 K, F, B, H, D = 6, 6, 4, 30, 2

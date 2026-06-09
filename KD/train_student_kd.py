@@ -9,17 +9,15 @@ from pathlib import Path
 
 import h5py
 
-# Run-from-anywhere bootstrap: put the repo root and this KD dir on sys.path so
-# the repo packages (models, datasets) and the sibling KD modules import under
-# one flat convention. See KD/KD_CHANGES.md.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_REPO_ROOT = os.path.abspath(os.path.join(_HERE, ".."))
-for _p in (_REPO_ROOT, _HERE):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+# Run-from-anywhere bootstrap: ensure the repo root is on sys.path so the
+# repo packages (models, datasets, utils) and the KD package all import
+# absolutely. Run as `python -m KD.train_student_kd` or `python KD/train_student_kd.py`.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
-from hivt_kd import HiVTKD
-from kd_datamodule import KDDataModule
+from KD.hivt_kd import HiVTKD
+from KD.kd_datamodule import KDDataModule
 
 if __name__ == "__main__":
     import argparse

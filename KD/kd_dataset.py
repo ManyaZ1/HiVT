@@ -24,8 +24,8 @@ from pathlib import Path
 import torch
 #from torch_geometric.data import Data # more data corruptiion from PyG: my favorite      !!!
 
-from utils import TemporalData               # repo module (absolute; repo root on sys.path)
-from kd_teacher_store import TeacherStore   # sibling KD module (flat; KD/files on sys.path)
+from utils import TemporalData                # repo module (absolute; repo root on sys.path)
+from KD.kd_teacher_store import TeacherStore  # sibling KD module (absolute from repo root)
 
 
 class KDData(TemporalData):

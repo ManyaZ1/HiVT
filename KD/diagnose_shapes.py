@@ -33,11 +33,12 @@ import torch
 from torch_geometric.loader import DataLoader   # new PyG API
 
 # ── project imports ──────────────────────────────────────────────────────────
-# Adjust sys.path if you run from a different directory
-sys.path.insert(0, str(Path(__file__).parent))
+# Ensure the repo root is on sys.path so repo packages and the KD package import
+# absolutely. Run as `python -m KD.diagnose_shapes`.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from datasets import ArgoverseV1Dataset          # noqa: E402
-from kd_dataset import KDDataset                # noqa: E402
+from KD.kd_dataset import KDDataset              # noqa: E402
 
 PASS = "\033[92mPASS\033[0m"
 FAIL = "\033[91mFAIL\033[0m"
@@ -164,8 +165,8 @@ def check_collation(data_root: str, h5_path: str, batch_size: int = 4):
 # ────────────────────────────────────────────────────────────────────────────
 def check_loss_forward(batch_size: int = 4):
     print(f"\n── [4] kd_loss forward pass (synthetic tensors, B={batch_size}) ─")
-    sys.path.insert(0, str(Path(__file__).parent))
-    from kd_loss import HiVTKDLoss
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from KD.kd_loss import HiVTKDLoss
 
     F, N, H = 6, batch_size, 30
 

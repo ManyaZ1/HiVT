@@ -26,7 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from models.hivt import HiVT          # repo module (absolute; repo root on sys.path)
-from kd_loss import HiVTKDLoss         # sibling KD module (flat; KD/files on sys.path)
+from KD.kd_loss import HiVTKDLoss     # sibling KD module (absolute from repo root)
 
 
 def _count_parameters(model: nn.Module) -> Dict[str, int]:
