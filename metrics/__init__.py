@@ -16,3 +16,6 @@ from metrics.fde import FDE
 from metrics.mr import MR
 from metrics.brier import BrierADE
 from metrics.brier import BrierFDE
+from metrics.prob import PMinADE
+from metrics.prob import PMinFDE
+from metrics.prob import PMR

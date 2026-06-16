@@ -23,6 +23,9 @@ from metrics import FDE
 from metrics import MR
 from metrics import BrierADE
 from metrics import BrierFDE
+from metrics import PMinADE
+from metrics import PMinFDE
+from metrics import PMR
 from models import GlobalInteractor
 from models import LocalEncoder
 from models import MLPDecoder
@@ -92,6 +95,9 @@ class HiVT(pl.LightningModule):
         # depend on the mixture weights pi, so they reflect KD of mode weights.
         self.minBrierADE = BrierADE()
         self.minBrierFDE = BrierFDE()
+        self.pMinADE = PMinADE()
+        self.pMinFDE = PMinFDE()
+        self.pMR = PMR()
 
     def forward(self, data: TemporalData):
         if self.rotate:
@@ -172,12 +178,18 @@ class HiVT(pl.LightningModule):
         self.minMR.update(y_hat_best_agent, y_agent)
         self.minBrierADE.update(y_hat_best_agent, y_agent, prob_best)
         self.minBrierFDE.update(y_hat_best_agent, y_agent, prob_best)
+        self.pMinADE.update(y_hat_best_agent, y_agent, prob_best)
+        self.pMinFDE.update(y_hat_best_agent, y_agent, prob_best)
+        self.pMR.update(y_hat_best_agent, y_agent, prob_best)
         mix_nll = self.mixture_laplace_nll(y_hat, pi, data.y, reg_mask, data['agent_index'])
         self.log('val_minADE', self.minADE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log('val_minFDE', self.minFDE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log('val_minMR', self.minMR, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log('val_brier_minADE', self.minBrierADE, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log('val_brier_minFDE', self.minBrierFDE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log('val_p_minADE', self.pMinADE, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log('val_p_minFDE', self.pMinFDE, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log('val_p_MR', self.pMR, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log('val_mixNLL', mix_nll, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
 
     def configure_optimizers(self):

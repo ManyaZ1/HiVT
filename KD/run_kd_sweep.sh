@@ -21,10 +21,19 @@ LR=${LR:-3e-3}
 KLS=${KLS:-"0.0 0.5 1.0"}
 SUFFIX=${SUFFIX:--cal}                                   # appended to every run_name
 GROUP=${GROUP:-triage-kd-emb32-lr${LR}${SUFFIX}}
+EPOCHS=${EPOCHS:-15}                                     # also used as T_max
+SUB=${SUB:-0.25}                                         # 1 / "" / full => use the whole dataset
+CKPT_EVERY=${CKPT_EVERY:-50}
 LOGDIR=kd_ckpt/_triage_logs
 mkdir -p "$LOGDIR"
 
-echo "[kd-sweep] LR=$LR  KLS=$KLS  group=$GROUP  suffix=$SUFFIX"
+# Subsample flags only when SUB is a real fraction (<1). Full runs omit them.
+SUB_ARGS=()
+if [[ -n "$SUB" && "$SUB" != "1" && "$SUB" != "full" ]]; then
+  SUB_ARGS=(--train_subsample "$SUB" --val_subsample "$SUB")
+fi
+
+echo "[kd-sweep] LR=$LR  KLS=$KLS  epochs=$EPOCHS  sub=${SUB:-full}  group=$GROUP"
 for KL in $KLS; do
   RUN_NAME="triage-emb32-lr${LR}-kl${KL}${SUFFIX}"
   echo "=================================================================="
@@ -37,14 +46,13 @@ for KL in $KLS; do
     --batch_size 128 \
     --lr "$LR" \
     --lambda_kl "$KL" \
-    --train_subsample 0.25 \
-    --val_subsample 0.25 \
-    --max_epochs 15 \
-    --T_max 15 \
+    "${SUB_ARGS[@]}" \
+    --max_epochs "$EPOCHS" \
+    --T_max "$EPOCHS" \
     --precision bf16 \
     --gpus 1 \
     --num_workers 8 \
-    --checkpoint_every_n_epochs 50 \
+    --checkpoint_every_n_epochs "$CKPT_EVERY" \
     --wandb_project hivt-kd \
     --wandb_group "$GROUP" \
     --run_name "$RUN_NAME" \

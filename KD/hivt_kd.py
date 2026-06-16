@@ -217,11 +217,17 @@ class HiVTKD(pl.LightningModule):
         self.student.minMR.update(y_hat_best_agent, y_agent)
         self.student.minBrierADE.update(y_hat_best_agent, y_agent, prob_best)
         self.student.minBrierFDE.update(y_hat_best_agent, y_agent, prob_best)
+        self.student.pMinADE.update(y_hat_best_agent, y_agent, prob_best)
+        self.student.pMinFDE.update(y_hat_best_agent, y_agent, prob_best)
+        self.student.pMR.update(y_hat_best_agent, y_agent, prob_best)
         self.log("val_minADE", self.student.minADE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log("val_minFDE", self.student.minFDE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log("val_minMR", self.student.minMR, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log("val_brier_minADE", self.student.minBrierADE, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log("val_brier_minFDE", self.student.minBrierFDE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log("val_p_minADE", self.student.pMinADE, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log("val_p_minFDE", self.student.pMinFDE, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log("val_p_MR", self.student.pMR, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log("val_mixNLL", mix_nll, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
 
     # ---------------------------------------------------------------------- #
