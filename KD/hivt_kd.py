@@ -251,9 +251,10 @@ class HiVTKD(pl.LightningModule):
         parser.add_argument("--lambda_pi",    type=float, default=0.0,
                             help="DEPRECATED / ignored by the permutation-invariant "
                                  "loss. Kept for CLI backward-compatibility.")
-        parser.add_argument("--teacher_dir",  type=str,   required=True,
+        parser.add_argument("--teacher_dir",  type=str,   default=None,
                             help="Directory / cache containing teacher soft targets "
-                                 "(output of save_teacher_outputs.py)")
+                                 "(output of save_teacher_outputs.py). Omit for a "
+                                 "teacher-free run, e.g. lambda_kl=0 LR triage.")
         # Sanity-test only: bypass the cosine LR schedule for single-batch overfit.
         parser.add_argument("--sanity_constant_lr", action="store_true",
                             help="Drop HiVT's CosineAnnealingLR and train at a "
