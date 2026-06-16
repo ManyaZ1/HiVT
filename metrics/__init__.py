@@ -14,3 +14,5 @@
 from metrics.ade import ADE
 from metrics.fde import FDE
 from metrics.mr import MR
+from metrics.brier import BrierADE
+from metrics.brier import BrierFDE

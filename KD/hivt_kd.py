@@ -208,12 +208,21 @@ class HiVTKD(pl.LightningModule):
         fde_agent = torch.norm(y_hat_agent[:, :, -1] - y_agent[:, -1], p=2, dim=-1)
         best_mode_agent = fde_agent.argmin(dim=0)
         y_hat_best_agent = y_hat_agent[best_mode_agent, torch.arange(data.num_graphs)]
+        # Probability-aware metrics: depend on pi, so they reflect KD of the
+        # teacher's mode weights (which oracle min* metrics are blind to).
+        prob_best = F.softmax(pi[data['agent_index']], dim=-1)[torch.arange(data.num_graphs), best_mode_agent]
+        mix_nll = self.student.mixture_laplace_nll(y_hat, pi, data.y, reg_mask, data['agent_index'])
         self.student.minADE.update(y_hat_best_agent, y_agent)
         self.student.minFDE.update(y_hat_best_agent, y_agent)
         self.student.minMR.update(y_hat_best_agent, y_agent)
+        self.student.minBrierADE.update(y_hat_best_agent, y_agent, prob_best)
+        self.student.minBrierFDE.update(y_hat_best_agent, y_agent, prob_best)
         self.log("val_minADE", self.student.minADE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log("val_minFDE", self.student.minFDE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log("val_minMR", self.student.minMR, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log("val_brier_minADE", self.student.minBrierADE, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log("val_brier_minFDE", self.student.minBrierFDE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log("val_mixNLL", mix_nll, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
 
     # ---------------------------------------------------------------------- #
     # Optimiser / scheduler — reuse student's configuration

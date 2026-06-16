@@ -21,6 +21,8 @@ from losses import SoftTargetCrossEntropyLoss
 from metrics import ADE
 from metrics import FDE
 from metrics import MR
+from metrics import BrierADE
+from metrics import BrierFDE
 from models import GlobalInteractor
 from models import LocalEncoder
 from models import MLPDecoder
@@ -86,6 +88,10 @@ class HiVT(pl.LightningModule):
         self.minADE = ADE()
         self.minFDE = FDE()
         self.minMR = MR()
+        # Probability-aware (calibration-sensitive) metrics. Unlike min*, these
+        # depend on the mixture weights pi, so they reflect KD of mode weights.
+        self.minBrierADE = BrierADE()
+        self.minBrierFDE = BrierFDE()
 
     def forward(self, data: TemporalData):
         if self.rotate:
@@ -122,6 +128,29 @@ class HiVT(pl.LightningModule):
         self.log('train_reg_loss', reg_loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=1)
         return loss
 
+    @staticmethod
+    def mixture_laplace_nll(y_hat, pi, y, reg_mask, agent_index, eps=1e-6):
+        """Per-agent NLL of GT under the full K-mode Laplace mixture.
+
+        Unlike val_reg_loss (Laplace NLL of the single oracle-best mode), this
+        scores the *whole* predicted distribution -- locations, scales
+        (uncertainty) AND mixture weights -- so it is a proper scoring rule that
+        moves when KD improves calibration even if oracle minFDE does not.
+
+        y_hat [F,N,H,4] (loc|scale), pi [N,F] logits, y [N,H,2],
+        reg_mask [N,H] valid-future mask, agent_index [B].
+        """
+        ya = y_hat[:, agent_index]                              # [F,B,H,4]
+        loc, scale = ya[..., :2], ya[..., 2:].clamp(min=eps)    # [F,B,H,2]
+        tgt = y[agent_index].unsqueeze(0)                       # [1,B,H,2]
+        mask = reg_mask[agent_index]                           # [B,H]
+        # Laplace log-density per element (negated LaplaceNLLLoss convention).
+        logp_elem = -(torch.log(2 * scale) + (tgt - loc).abs() / scale)  # [F,B,H,2]
+        logp_k = (logp_elem * mask[None, :, :, None]).sum(dim=(2, 3))    # [F,B]
+        logpi = F.log_softmax(pi[agent_index], dim=-1).t()             # [F,B]
+        log_mix = torch.logsumexp(logpi + logp_k, dim=0)              # [B]
+        return -log_mix.mean()
+
     def validation_step(self, data, batch_idx):
         y_hat, pi = self(data)
         reg_mask = ~data['padding_mask'][:, self.historical_steps:]
@@ -136,12 +165,20 @@ class HiVT(pl.LightningModule):
         fde_agent = torch.norm(y_hat_agent[:, :, -1] - y_agent[:, -1], p=2, dim=-1)
         best_mode_agent = fde_agent.argmin(dim=0)
         y_hat_best_agent = y_hat_agent[best_mode_agent, torch.arange(data.num_graphs)]
+        # Probability the model assigned to the chosen (min-FDE) mode -> Brier term.
+        prob_best = F.softmax(pi[data['agent_index']], dim=-1)[torch.arange(data.num_graphs), best_mode_agent]
         self.minADE.update(y_hat_best_agent, y_agent)
         self.minFDE.update(y_hat_best_agent, y_agent)
         self.minMR.update(y_hat_best_agent, y_agent)
+        self.minBrierADE.update(y_hat_best_agent, y_agent, prob_best)
+        self.minBrierFDE.update(y_hat_best_agent, y_agent, prob_best)
+        mix_nll = self.mixture_laplace_nll(y_hat, pi, data.y, reg_mask, data['agent_index'])
         self.log('val_minADE', self.minADE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log('val_minFDE', self.minFDE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log('val_minMR', self.minMR, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log('val_brier_minADE', self.minBrierADE, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log('val_brier_minFDE', self.minBrierFDE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log('val_mixNLL', mix_nll, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
 
     def configure_optimizers(self):
         decay = set()
