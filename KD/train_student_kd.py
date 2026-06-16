@@ -41,44 +41,87 @@ if __name__ == "__main__":
     #   - directory cache:            <teacher_dir>/manifest.json
     #   - single .h5 + sidecar json:  <teacher_dir>.manifest.json  (save_teacher_ouputs.py)
     #   - single .h5 with _meta group: legacy bundler (prepare_teacher_cache.py)
-    teacher_path = Path(args.teacher_dir)
-    if not teacher_path.exists():
+    # No teacher_dir -> teacher-free run (e.g. lambda_kl=0 LR triage). Skip the
+    # manifest lookup and cache validation entirely so setup stays fast.
+    if args.teacher_dir is None:
+        print("[teacher] no --teacher_dir given; running teacher-free "
+              "(KD term disabled). Ensure --lambda_kl 0.")
+        manifest = {"teacher_params": {"total": 0, "trainable": 0}}
+        teacher_path = None
+    else:
+        teacher_path = Path(args.teacher_dir)
+    if teacher_path is not None and not teacher_path.exists():
         raise FileNotFoundError(f"Teacher cache not found: {teacher_path}")
 
-    dir_manifest     = teacher_path / "manifest.json"
-    sidecar_manifest = teacher_path.with_suffix(teacher_path.suffix + ".manifest.json")
-    manifest = None
-    if dir_manifest.exists():
-        manifest = json.loads(dir_manifest.read_text())
-    elif sidecar_manifest.exists():
-        manifest = json.loads(sidecar_manifest.read_text())
-    elif teacher_path.suffix.lower() in {".h5", ".hdf5"}:
-        with h5py.File(teacher_path, "r") as h5_file:
-            if "_meta" in h5_file:
-                meta = h5_file["_meta"].attrs
-                manifest = {"teacher_params": {
-                    "total": int(meta.get("teacher_params_total", 0)),
-                    "trainable": int(meta.get("teacher_params_trainable", 0)),
-                }}
-    if manifest is None:
-        print(f"[warn] No teacher manifest/_meta found for {teacher_path}; "
-              f"logging teacher_params=0.")
-        manifest = {"teacher_params": {"total": 0, "trainable": 0}}
+    if teacher_path is not None:
+        dir_manifest     = teacher_path / "manifest.json"
+        sidecar_manifest = teacher_path.with_suffix(teacher_path.suffix + ".manifest.json")
+        manifest = None
+        if dir_manifest.exists():
+            manifest = json.loads(dir_manifest.read_text())
+        elif sidecar_manifest.exists():
+            manifest = json.loads(sidecar_manifest.read_text())
+        elif teacher_path.suffix.lower() in {".h5", ".hdf5"}:
+            with h5py.File(teacher_path, "r") as h5_file:
+                if "_meta" in h5_file:
+                    meta = h5_file["_meta"].attrs
+                    manifest = {"teacher_params": {
+                        "total": int(meta.get("teacher_params_total", 0)),
+                        "trainable": int(meta.get("teacher_params_trainable", 0)),
+                    }}
+        if manifest is None:
+            print(f"[warn] No teacher manifest/_meta found for {teacher_path}; "
+                  f"logging teacher_params=0.")
+            manifest = {"teacher_params": {"total": 0, "trainable": 0}}
 
     # --batch_size -> train_batch_size mapping happens later in from_argparse_args,
     # so read the generic flag here for naming.
     _bs = getattr(args, "batch_size", None) or args.train_batch_size
     run_name = args.run_name or f"emb{args.embed_dim}-bs{_bs}-lkl{args.lambda_kl}"
 
+    # Auto-resume (decided BEFORE building the logger so wandb can resume too):
+    # if a previous run of this run_name left a last.ckpt, continue from it
+    # (unless the user explicitly passed --resume_from_checkpoint).
+    run_dir       = Path(f"kd_ckpt/{run_name}")
+    last_ckpt     = run_dir / "best" / "last.ckpt"
+    wandb_id_file = run_dir / "wandb_run_id.txt"
+
+    if getattr(args, "resume_from_checkpoint", None) is None and last_ckpt.exists():
+        args.resume_from_checkpoint = str(last_ckpt)
+        print(f"[auto-resume] Found {last_ckpt} — resuming from it.")
+    elif getattr(args, "resume_from_checkpoint", None) is not None:
+        print(f"[auto-resume] Using explicit checkpoint {args.resume_from_checkpoint}.")
+    else:
+        print("[auto-resume] No last.ckpt found — starting fresh.")
+
+    # Resume the SAME wandb run across crashes. The run id is persisted next to
+    # the checkpoints on first launch and read back when we resume from a ckpt,
+    # so the dashboard shows one continuous run instead of a new one per restart.
+    resuming = getattr(args, "resume_from_checkpoint", None) is not None
+    if resuming and wandb_id_file.exists():
+        wandb_id     = wandb_id_file.read_text().strip()
+        wandb_resume = "allow"   # continue this id; create it if the server lost it
+        print(f"[wandb-resume] Continuing wandb run id={wandb_id}.")
+    else:
+        wandb_id     = wandb.util.generate_id()
+        wandb_resume = "never"
+        print(f"[wandb-resume] New wandb run id={wandb_id}.")
+
     wandb_logger = WandbLogger(
         project=args.wandb_project,
         group=args.wandb_group,
         name=run_name,
+        id=wandb_id,
+        resume=wandb_resume,
         config={
             **vars(args),
             "teacher_params": manifest["teacher_params"]["total"],
         },
     )
+
+    # Persist the id (idempotent) so the next crash/resume reuses this run.
+    run_dir.mkdir(parents=True, exist_ok=True)
+    wandb_id_file.write_text(wandb_id)
 
     best_checkpoint = ModelCheckpoint(
         monitor="val_minFDE",
@@ -96,15 +139,6 @@ if __name__ == "__main__":
         save_last=False,  # Avoid duplication; best_checkpoint owns last.ckpt
     )
 
-    # Auto-resume: if a previous run of this run_name left a last.ckpt, continue
-    # from it (unless the user explicitly passed --resume_from_checkpoint).
-    last_ckpt = Path(f"kd_ckpt/{run_name}/best/last.ckpt")
-    if getattr(args, "resume_from_checkpoint", None) is None and last_ckpt.exists():
-        args.resume_from_checkpoint = str(last_ckpt)
-        print(f"[auto-resume] Found {last_ckpt} — resuming from it.")
-    else:
-        print("[auto-resume] No last.ckpt found — starting fresh.")
-
     trainer = pl.Trainer.from_argparse_args(
         args,
         logger=wandb_logger,
@@ -115,10 +149,13 @@ if __name__ == "__main__":
     model = HiVTKD(**vars(args))
     # Log student param count into wandb config right after init
     counts = model.log_parameter_counts()
+    # allow_val_change: on resume these keys already exist in the run config, and
+    # compression_ratio can differ by a float ULP between launches — without this,
+    # wandb raises ConfigError and aborts the resumed run.
     wandb_logger.experiment.config.update({
         "student_params": counts["total"],
         "compression_ratio": manifest["teacher_params"]["total"] / counts["total"],
-    })
+    }, allow_val_change=True)
 
     datamodule = KDDataModule.from_argparse_args(args)
     trainer.fit(model, datamodule)

@@ -1,0 +1,116 @@
+{
+  "summary": {
+    "scenes": 500,
+    "teacher_modes_F": 6,
+    "student_modes_K": 6,
+    "cost": "fde",
+    "greedy_accidental_alignment_rate": 0.10833333333333334,
+    "chance_level_1_over_F": 0.16666666666666666,
+    "top_mode_geom_agreement_rate": 0.382,
+    "identity_is_optimal_rate": 0.0,
+    "mean_cost_identity_m": 5.164739778757095,
+    "mean_cost_optimal_m": 1.8166896729469288,
+    "identity_over_optimal_cost_ratio_mean": 3.980223992699415,
+    "identity_over_optimal_cost_ratio_median": 3.3104130735974007
+  },
+  "greedy_freq": [
+    [
+      235,
+      14,
+      87,
+      1,
+      160,
+      3
+    ],
+    [
+      54,
+      5,
+      8,
+      0,
+      433,
+      0
+    ],
+    [
+      4,
+      77,
+      15,
+      142,
+      1,
+      261
+    ],
+    [
+      123,
+      113,
+      220,
+      2,
+      19,
+      23
+    ],
+    [
+      28,
+      201,
+      98,
+      19,
+      3,
+      151
+    ],
+    [
+      2,
+      4,
+      1,
+      427,
+      1,
+      65
+    ]
+  ],
+  "perm_freq": [
+    [
+      463,
+      1,
+      19,
+      1,
+      15,
+      1
+    ],
+    [
+      12,
+      3,
+      3,
+      0,
+      481,
+      1
+    ],
+    [
+      0,
+      20,
+      1,
+      9,
+      1,
+      469
+    ],
+    [
+      20,
+      34,
+      443,
+      1,
+      2,
+      0
+    ],
+    [
+      4,
+      435,
+      32,
+      5,
+      1,
+      23
+    ],
+    [
+      1,
+      7,
+      2,
+      484,
+      0,
+      6
+    ]
+  ]
+}

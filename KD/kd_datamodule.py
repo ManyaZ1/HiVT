@@ -10,6 +10,7 @@ Validation uses the plain dataset (no teacher targets needed at eval time).
 import argparse
 from pathlib import Path
 
+import torch
 import pytorch_lightning as pl
 from torch_geometric.data import DataLoader as PyGDataLoader
 
@@ -37,6 +38,10 @@ class KDDataModule(pl.LightningDataModule):
         self.local_radius = kwargs.get("local_radius", 50)
         self.train_transform = kwargs.get("train_transform")
         self.val_transform = kwargs.get("val_transform")
+        # Deterministic subsampling for fast hyperparameter triage. None = full.
+        # <=1.0 is interpreted as a fraction, >1 as an absolute scene count.
+        self.train_subsample = kwargs.get("train_subsample", None)
+        self.val_subsample   = kwargs.get("val_subsample",   None)
         self._kwargs = kwargs   # forward the rest to ArgoverseV1Dataset
 
     def prepare_data(self):
@@ -64,6 +69,25 @@ class KDDataModule(pl.LightningDataModule):
             )
         print("Teacher cache validation passed.")
 
+    @staticmethod
+    def _maybe_subsample(dataset, spec, split_name, seed):
+        """Deterministically subset a dataset for fast triage.
+
+        spec <= 1.0 -> fraction of the dataset; spec > 1 -> absolute count.
+        The same seed yields the same subset across runs, so different LR/kl
+        configs are compared on identical data. Returns a torch Subset that
+        still yields PyG Data objects (PyGDataLoader handles it transparently).
+        """
+        if spec is None:
+            return dataset
+        n = len(dataset)
+        k = max(1, int(round(spec * n))) if spec <= 1.0 else min(n, int(spec))
+        generator = torch.Generator().manual_seed(seed)
+        indices = torch.randperm(n, generator=generator)[:k].tolist()
+        print(f"[subsample] {split_name}: {k}/{n} scenes "
+              f"({100.0 * k / n:.1f}%), seed={seed}")
+        return torch.utils.data.Subset(dataset, indices)
+
     def setup(self, stage=None):
         print("Building KD datasets ...")
         base_train = ArgoverseV1Dataset(
@@ -83,6 +107,12 @@ class KDDataModule(pl.LightningDataModule):
             transform=self.val_transform,
             local_radius=self.local_radius,
         )
+        # Apply triage subsampling last so it wraps the fully-assembled datasets.
+        # Distinct seeds for train/val so the two subsets are independent.
+        self.train_dataset = self._maybe_subsample(
+            self.train_dataset, self.train_subsample, "train", seed=2022)
+        self.val_dataset = self._maybe_subsample(
+            self.val_dataset, self.val_subsample, "val", seed=1234)
         print("KD datasets ready.")
 
     def train_dataloader(self):
@@ -135,6 +165,13 @@ class KDDataModule(pl.LightningDataModule):
                      help="If set, overrides train/val batch sizes")
         add_argument("--checkpoint_every_n_epochs", type=int, default=20,
                      help="Save periodic checkpoint every N epochs")
+        add_argument("--train_subsample", type=float, default=None,
+                     help="Fast-triage subsample of the train set. <=1.0 = "
+                          "fraction, >1 = absolute scene count. Deterministic "
+                          "(seeded), so configs compare on identical data.")
+        add_argument("--val_subsample", type=float, default=None,
+                     help="Fast-triage subsample of the val set. Same "
+                          "semantics as --train_subsample.")
         # Teacher cache directory
         add_argument("--teacher_dir", type=str, default=None)
         # Can point to either a directory of .pt files or a single .h5 file.
