@@ -158,3 +158,119 @@ class HiVTKDLoss(nn.Module):
             "kd/mix_nll": kd_loss.detach(),
             "kd/total":   total.detach(),
         }
+
+#NOTES
+#Mean-target mixture distillation improves geometric accuracy and the official ranking metric
+# (brier-minFDE) but degrades full-distribution calibration, because it transfers the teacher's
+# mode locations and weights while discarding its predictive variance, yielding overconfident student
+# mixtures.
+
+
+class HiVTKDLossDist(HiVTKDLoss):
+    """
+    Distribution-matching distillation (v2).
+
+    --------------------------------------------------------------------------
+    WHY v2 EXISTS
+    --------------------------------------------------------------------------
+    The v1 loss (HiVTKDLoss) scores the teacher mode-MEANS as point targets and
+    discards the teacher scales entirely. Maximising log p_student(mu_T) is
+    achieved by shrinking the student's Laplace scales to pile density on those
+    points, so the student becomes systematically OVER-CONFIDENT: best-of-K
+    geometry (minADE/FDE) improves but the full-mixture calibration measured
+    against ground truth (mixNLL) degrades. See docs/kd_emb32_kl_comparison.md.
+
+    v2 distils the teacher's full predictive DISTRIBUTION instead of its means.
+    It minimises the Monte-Carlo cross-entropy between the teacher mixture and
+    the student mixture,
+
+        L_KD = - (1/(H*D)) * sum_f pi_T_f * E_{y ~ Laplace(mu_T_f, b_T_f)}[ log p_student(y) ]
+             ~ - (1/(H*D)) * sum_f pi_T_f * (1/S) sum_s log p_student(y_{f,s})
+
+    with S reparameterised Laplace samples per teacher component. Because the
+    student must now place density over the teacher's SPREAD (not just its mean
+    points), collapsing the scales no longer minimises the loss -- the teacher's
+    uncertainty is transferred, restoring calibration.
+
+    Relationship to v1: in the zero-variance limit (sampling exactly at the
+    teacher mean) v2 reduces to v1. v2 is therefore the strict generalisation
+    that adds the discarded teacher-scale information back in.
+
+    Permutation invariance is preserved: like v1 it scores teacher targets under
+    the whole student mixture (logsumexp over student modes), so no Hungarian
+    matching is required and K need not equal F.
+
+    Extra arg:
+        n_samples : Monte-Carlo samples drawn per teacher mode (default 8).
+                    Larger = lower-variance gradient, linearly more compute.
+    """
+
+    def __init__(self, lambda_kl: float = 1.0, lambda_pi: float = 0.0,
+                 min_scale: float = 1e-3, n_samples: int = 8):
+        super().__init__(lambda_kl=lambda_kl, lambda_pi=lambda_pi,
+                         min_scale=min_scale)
+        self.n_samples = int(n_samples)
+
+    def _sample_teacher(self, loc_t, scale_t):
+        """Reparameterised Laplace samples. -> [S, F, B, H, D]."""
+        b = scale_t.clamp_min(self.min_scale)
+        shape = (self.n_samples,) + loc_t.shape          # [S,F,B,H,D]
+        # u in (-0.5, 0.5); inverse CDF: x = mu - b * sign(u) * log(1 - 2|u|)
+        u = torch.rand(shape, device=loc_t.device, dtype=loc_t.dtype) - 0.5
+        arg = (1.0 - 2.0 * u.abs()).clamp_min(1e-6)
+        return loc_t.unsqueeze(0) - b.unsqueeze(0) * torch.sign(u) * torch.log(arg)
+
+    def forward(self, loc_s, scale_s, pi_s, loc_t, scale_t=None, pi_t=None):
+        assert scale_t is not None, \
+            "HiVTKDLossDist requires teacher scales; pass scale_t (it is cached)."
+        assert loc_s.shape[1:] == loc_t.shape[1:], \
+            f"B/H/coord mismatch: student {tuple(loc_s.shape)} vs teacher {tuple(loc_t.shape)}"
+        assert pi_t is not None and pi_t.shape[0] == loc_t.shape[1], \
+            f"teacher pi batch {tuple(pi_t.shape) if pi_t is not None else None} vs loc batch {tuple(loc_t.shape)}"
+
+        S = self.n_samples
+        Fm, B, H, D = loc_t.shape
+        norm = float(H * D)
+
+        log_pi_s  = F.log_softmax(pi_s, dim=-1)          # [B,K]
+        pi_t_soft = torch.softmax(pi_t, dim=-1)          # [B,F]
+
+        # Draw teacher samples and fold S into the "target" axis: [S*F, B, H, D]
+        samples = self._sample_teacher(loc_t, scale_t)   # [S,F,B,H,D]
+        samples = samples.reshape(S * Fm, B, H, D)
+
+        # log p_student over the K-mode mixture for every sample -> [S*F, B]
+        log_p = self._student_mixture_logprob(samples, loc_s, scale_s, log_pi_s)
+        log_p = log_p.reshape(S, Fm, B).mean(dim=0)      # MC average -> [F,B]
+
+        # Weight by teacher confidence, sum over teacher modes, per-element norm.
+        w   = pi_t_soft.permute(1, 0)                    # [F,B]
+        nll = -(w * log_p).sum(dim=0)                    # [B]
+        kd_loss = nll.mean() / norm
+
+        total = self.lambda_kd * kd_loss
+        return total, {
+            "kd/mix_nll": kd_loss.detach(),
+            "kd/total":   total.detach(),
+        }
+
+
+def make_kd_loss(kd_mode: str = "mean", *, lambda_kl: float = 1.0,
+                 lambda_pi: float = 0.0, min_scale: float = 1e-3,
+                 n_samples: int = 8) -> HiVTKDLoss:
+    """Factory selecting the KD loss variant.
+
+    kd_mode="mean" -> HiVTKDLoss      (v1, mean-target; default, original behaviour)
+    kd_mode="dist" -> HiVTKDLossDist  (v2, distribution-matching MC cross-entropy)
+    """
+    if kd_mode == "mean":
+        return HiVTKDLoss(lambda_kl=lambda_kl, lambda_pi=lambda_pi,
+                          min_scale=min_scale)
+    if kd_mode == "dist":
+        return HiVTKDLossDist(lambda_kl=lambda_kl, lambda_pi=lambda_pi,
+                              min_scale=min_scale, n_samples=n_samples)
+    raise ValueError(f"unknown kd_mode {kd_mode!r}; expected 'mean' or 'dist'")
+
+# To run v2: add --kd_mode dist to your existing KD command (optionally --kd_n_samples 16 for a lower-variance gradient).
+
+# One caveat worth a sanity check before a full run: v2's loss magnitude differs from v1 at the same λ (1.37 vs 1.14 in my random test), so the effective KD strength shifts — worth a quick triage λ for dist rather than assuming the mean λ transfers. 

@@ -69,6 +69,7 @@ python eval.py --root /home/manyazog/argoverse --batch_size 32 --ckpt_path /home
 
  python eval.py --root /home/manyazog/argoverse --batch_size 32 --ckpt_path /home/manyazog/HiVT/lightning_logs/version_0/checkpoints/epoch=63-step=411903.ckpt
 ```
+python eval.py --root /home/manya/argoverse --batch_size 128 --ckpt_path /home/manya/HiVT/kd_ckpt/emb32-bs128-lkl0.5/best/HiVTKD-epoch=62-val_minFDE=1.12.ckpt
 
 ## Data Preprocessing
 

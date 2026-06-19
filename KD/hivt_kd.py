@@ -26,7 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from models.hivt import HiVT          # repo module (absolute; repo root on sys.path)
-from KD.kd_loss import HiVTKDLoss     # sibling KD module (absolute from repo root)
+from KD.kd_loss import make_kd_loss   # sibling KD module (absolute from repo root)
 
 
 def _count_parameters(model: nn.Module) -> Dict[str, int]:
@@ -58,6 +58,10 @@ class HiVTKD(pl.LightningModule):
         self.lambda_kl    = kwargs.pop("lambda_kl",    0.5)
         self.lambda_pi    = kwargs.pop("lambda_pi",    0.0)
         self.teacher_dir  = kwargs.pop("teacher_dir",  None)
+        # KD loss variant: "mean" = v1 mean-target (default, original behaviour),
+        # "dist" = v2 distribution-matching MC cross-entropy (uses teacher scales).
+        self.kd_mode      = kwargs.pop("kd_mode",      "mean")
+        self.kd_n_samples = kwargs.pop("kd_n_samples", 8)
         # Sanity-test knobs: strip HiVT's cosine LR schedule (which decays to ~0
         # within a few dozen overfit steps) and optionally pin a constant LR.
         self.sanity_constant_lr = kwargs.pop("sanity_constant_lr", False)
@@ -69,10 +73,14 @@ class HiVTKD(pl.LightningModule):
         # Inner student model — embed_dim controls student width (e.g. 32)
         self.student = HiVT(**kwargs)
 
-        # KD loss module (permutation-invariant mixture NLL)
-        self.kd_loss_fn = HiVTKDLoss(
+        # KD loss module (permutation-invariant mixture NLL).
+        # v1 ("mean") and v2 ("dist") share the same forward signature, so the
+        # call site below is unchanged regardless of which is selected.
+        self.kd_loss_fn = make_kd_loss(
+            self.kd_mode,
             lambda_kl=self.lambda_kl,
             lambda_pi=self.lambda_pi,
+            n_samples=self.kd_n_samples,
         )
 
     # ---------------------------------------------------------------------- #
@@ -270,6 +278,15 @@ class HiVTKD(pl.LightningModule):
                             help="Directory / cache containing teacher soft targets "
                                  "(output of save_teacher_outputs.py). Omit for a "
                                  "teacher-free run, e.g. lambda_kl=0 LR triage.")
+        parser.add_argument("--kd_mode", type=str, default="mean",
+                            choices=["mean", "dist"],
+                            help="KD loss variant: 'mean' = v1 mean-target "
+                                 "(default, original behaviour); 'dist' = v2 "
+                                 "distribution-matching MC cross-entropy that also "
+                                 "distils the teacher scales (better calibration).")
+        parser.add_argument("--kd_n_samples", type=int, default=8,
+                            help="Monte-Carlo teacher samples per mode for "
+                                 "--kd_mode dist (ignored by 'mean').")
         # Sanity-test only: bypass the cosine LR schedule for single-batch overfit.
         parser.add_argument("--sanity_constant_lr", action="store_true",
                             help="Drop HiVT's CosineAnnealingLR and train at a "
