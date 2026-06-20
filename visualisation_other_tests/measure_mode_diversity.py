@@ -7,6 +7,46 @@ from datasets.argoverse_v1_dataset import ArgoverseV1Dataset
 from models.hivt import HiVT
 #python measure_mode_diversity.py --root /home/manyazog/argoverse --ckpt_path /home/manyazog/HiVT/checkpoints/HiVT-64/checkpoints/epoch=63-step=411903.ckpt
 
+# PyTorch >= 2.6 defaults torch.load to weights_only=True, which fails on our
+# (trusted) checkpoints that pickle callbacks. Restore the old behaviour.
+_orig_torch_load = torch.load
+
+
+def _torch_load(*args, **kwargs):
+    kwargs.setdefault('weights_only', False)
+    return _orig_torch_load(*args, **kwargs)
+
+
+torch.load = _torch_load
+
+
+def load_hivt(ckpt_path):
+    """Load a HiVT, transparently handling KD checkpoints.
+
+    KD checkpoints wrap HiVT as `self.student`, so every weight is saved under a
+    `student.` prefix and HiVT.load_from_checkpoint fails. Mirror eval.py: detect
+    the prefix, strip it, and load the student weights into a plain HiVT.
+    """
+    ckpt = torch.load(ckpt_path, map_location='cpu')
+    state_dict = ckpt['state_dict']
+    is_kd = any(k.startswith('student.') for k in state_dict)
+    if not is_kd:
+        return HiVT.load_from_checkpoint(ckpt_path, map_location='cpu')
+    hp = dict(ckpt['hyper_parameters'])
+    hivt_keys = {
+        'historical_steps', 'future_steps', 'num_modes', 'rotate', 'node_dim',
+        'edge_dim', 'embed_dim', 'num_heads', 'dropout', 'num_temporal_layers',
+        'num_global_layers', 'local_radius', 'parallel', 'lr', 'weight_decay',
+        'T_max',
+    }
+    hivt_kwargs = {k: v for k, v in hp.items() if k in hivt_keys}
+    hivt_kwargs['parallel'] = True
+    model = HiVT(**hivt_kwargs)
+    student_sd = {k[len('student.'):]: v for k, v in state_dict.items()
+                  if k.startswith('student.')}
+    model.load_state_dict(student_sd, strict=True)
+    return model
+
 # Utility: pairwise euclidean distances between all modes
 def pairwise_mode_distances(trajs):
     # trajs: [F, T, 2] (F = num_modes)
@@ -22,7 +62,7 @@ def pairwise_mode_distances(trajs):
 def main(args):
     # Load dataset
     dataset = ArgoverseV1Dataset(args.root, split="val")
-    model = HiVT.load_from_checkpoint(args.ckpt_path, map_location="cpu")
+    model = load_hivt(args.ckpt_path)
     model.eval()
 
     all_pairwise = []

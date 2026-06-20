@@ -27,6 +27,7 @@ import torch.nn.functional as F
 
 from models.hivt import HiVT          # repo module (absolute; repo root on sys.path)
 from KD.kd_loss import make_kd_loss   # sibling KD module (absolute from repo root)
+from metrics import log_laplace_coverage
 
 
 def _count_parameters(model: nn.Module) -> Dict[str, int]:
@@ -220,6 +221,18 @@ class HiVTKD(pl.LightningModule):
         # teacher's mode weights (which oracle min* metrics are blind to).
         prob_best = F.softmax(pi[data['agent_index']], dim=-1)[torch.arange(data.num_graphs), best_mode_agent]
         mix_nll = self.student.mixture_laplace_nll(y_hat, pi, data.y, reg_mask, data['agent_index'])
+
+        # --- Diagnostic calibration metrics (mirror models/hivt.py validation) ---
+        b_agent = y_hat[:, data['agent_index'], :, 2:]                    # [F, B, H, 2]
+        b_best = b_agent[best_mode_agent, torch.arange(data.num_graphs)]  # [B, H, 2]
+        mask_agent = reg_mask[data['agent_index']]                        # [B, H]
+        self.student.bScale.update(b_best[mask_agent])
+        self.student.bScaleAll.update(b_agent[:, mask_agent])
+        self.student.coverage.update(y_hat_best_agent, b_best, y_agent, mask_agent)
+        pi_agent = F.softmax(pi[data['agent_index']], dim=-1)             # [B, F]
+        pi_entropy = -(pi_agent * torch.log(pi_agent.clamp_min(1e-12))).sum(dim=-1)
+        self.student.piEntropy.update(pi_entropy)
+
         self.student.minADE.update(y_hat_best_agent, y_agent)
         self.student.minFDE.update(y_hat_best_agent, y_agent)
         self.student.minMR.update(y_hat_best_agent, y_agent)
@@ -237,6 +250,13 @@ class HiVTKD(pl.LightningModule):
         self.log("val_p_minFDE", self.student.pMinFDE, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log("val_p_MR", self.student.pMR, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log("val_mixNLL", mix_nll, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log("val_b_scale", self.student.bScale, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log("val_b_scale_all", self.student.bScaleAll, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log("val_pi_entropy", self.student.piEntropy, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+
+    def on_validation_epoch_end(self):
+        # Reuse the coverage metric on the student; log to this (KD) module's run.
+        log_laplace_coverage(self, self.student.coverage)
 
     # ---------------------------------------------------------------------- #
     # Optimiser / scheduler — reuse student's configuration

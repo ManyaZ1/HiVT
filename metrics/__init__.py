@@ -19,3 +19,6 @@ from metrics.brier import BrierFDE
 from metrics.prob import PMinADE
 from metrics.prob import PMinFDE
 from metrics.prob import PMR
+from metrics.calibration import ScalarMean
+from metrics.calibration import LaplaceCoverage
+from metrics.calibration import log_laplace_coverage

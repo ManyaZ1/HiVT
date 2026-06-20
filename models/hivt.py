@@ -26,6 +26,9 @@ from metrics import BrierFDE
 from metrics import PMinADE
 from metrics import PMinFDE
 from metrics import PMR
+from metrics import ScalarMean
+from metrics import LaplaceCoverage
+from metrics import log_laplace_coverage
 from models import GlobalInteractor
 from models import LocalEncoder
 from models import MLPDecoder
@@ -98,6 +101,13 @@ class HiVT(pl.LightningModule):
         self.pMinADE = PMinADE()
         self.pMinFDE = PMinFDE()
         self.pMR = PMR()
+        # Diagnostic calibration metrics (no effect on training): sharpness of the
+        # predicted Laplace scale b, mode-weight entropy (collapse proxy), and the
+        # empirical coverage of the predicted Laplace (reliability + scalar ECE).
+        self.bScale = ScalarMean()      # val_b_scale: chosen (min-FDE) mode
+        self.bScaleAll = ScalarMean()   # val_b_scale_all: all modes
+        self.piEntropy = ScalarMean()   # val_pi_entropy: mode-weight entropy
+        self.coverage = LaplaceCoverage()
 
     def forward(self, data: TemporalData):
         if self.rotate:
@@ -182,6 +192,19 @@ class HiVT(pl.LightningModule):
         self.pMinFDE.update(y_hat_best_agent, y_agent, prob_best)
         self.pMR.update(y_hat_best_agent, y_agent, prob_best)
         mix_nll = self.mixture_laplace_nll(y_hat, pi, data.y, reg_mask, data['agent_index'])
+
+        # --- Diagnostic calibration metrics (sharpness / coverage / diversity) ---
+        # Laplace scales b for the agent: [F, B, H, 2] (channels 2:4 of y_hat).
+        b_agent = y_hat[:, data['agent_index'], :, 2:]
+        b_best = b_agent[best_mode_agent, torch.arange(data.num_graphs)]   # [B, H, 2]
+        mask_agent = reg_mask[data['agent_index']]                         # [B, H]
+        self.bScale.update(b_best[mask_agent])
+        self.bScaleAll.update(b_agent[:, mask_agent])
+        self.coverage.update(y_hat_best_agent, b_best, y_agent, mask_agent)
+        # In-training mode-collapse proxy: entropy of the agent's mode weights.
+        pi_agent = F.softmax(pi[data['agent_index']], dim=-1)              # [B, F]
+        pi_entropy = -(pi_agent * torch.log(pi_agent.clamp_min(1e-12))).sum(dim=-1)
+        self.piEntropy.update(pi_entropy)
         self.log('val_minADE', self.minADE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log('val_minFDE', self.minFDE, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log('val_minMR', self.minMR, prog_bar=True, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
@@ -191,6 +214,14 @@ class HiVT(pl.LightningModule):
         self.log('val_p_minFDE', self.pMinFDE, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log('val_p_MR', self.pMR, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
         self.log('val_mixNLL', mix_nll, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log('val_b_scale', self.bScale, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log('val_b_scale_all', self.bScaleAll, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+        self.log('val_pi_entropy', self.piEntropy, prog_bar=False, on_step=False, on_epoch=True, batch_size=y_agent.size(0))
+
+    def on_validation_epoch_end(self):
+        # Coverage needs globally-accumulated hit/count state, so log the full
+        # reliability curve + scalar calibration error once per epoch.
+        log_laplace_coverage(self, self.coverage)
 
     def configure_optimizers(self):
         decay = set()
