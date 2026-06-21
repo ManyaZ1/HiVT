@@ -87,23 +87,72 @@ python visualisation_other_tests/plot_lambda_sweep.py \
 ```
 (`docs/figures/` does not exist yet; the plotter creates it. JSON/PNG not yet produced.)
 
-## 7. Next experiments (priority order)
+## 7. Next experiments (priority order — re-planned 2026-06-20)
 
-1. **Full-data λ=0.25 run** — HIGHEST VALUE. On triage, λ=0.25 dominated λ=0.5 on every metric; the existing
-   full run used 0.5 (past the optimum). Run full (64 ep, full data, `--kd_mode mean`, λ=0.25) in tmux+watchdog,
-   then `eval.py` it and compare vs the λ=0.5 full-data row — does 0.25 win on **both** minFDE and mixNLL (maybe
-   even erase the +20.6% mixNLL regression)? Launcher: `KLS="0.25" SUFFIX="" SUB=full EPOCHS=64 bash KD/run_kd_sweep.sh`
-   (⚠️ verify `run_kd_sweep.sh` honors `SUB=full`/`EPOCHS` overrides before trusting it).
-2. **Teacher gold-standard** — `eval.py` the HiVT-128 teacher to record its `b_scale`/coverage; that's the
-   calibration target v2 should move the student toward.
-3. **v2 validation** (`--kd_mode dist`) — smoke → triage *its own* λ (v2 loss magnitude ≠ v1) → one full run.
-   Pre-registered success test: keeps `b_scale`/coverage near the λ=0 baseline while retaining the geometry gain.
-4. **Efficiency axis** — params + measured latency for HiVT-32/64/128 (the "recover X% accuracy at Y% cost"
-   framing). Independent, no training.
-5. **Multiple seeds** — only for the final headline geometry comparison; calibration deltas are huge and don't
-   need seeds.
-6. **Phase D — emb16 transfer** — re-triage LR, then full runs both arms; tests whether KD benefit grows as the
-   student shrinks.
+**Strategic framing.** The thesis arc is *diagnose (v1 shrinks `b`) → fix (v2 recovers calibration)*. The
+diagnosis is **done and falsifiable-tested** (monotone in λ, mode-collapse ruled out). The geometry gain is
+**done**. The **one open piece of the actual contribution is v2 — implemented but never trained.** So v2 is the
+headline. Everything that only refines v1 (notably the λ=0.25 operating point) is a *refinement that does not
+change any conclusion* and is deliberately deferred. Tier 0 = cheap, no-training reference measurements that
+must precede v2 so its results are interpretable.
+
+### Tier 0 — cheap, no training, do FIRST (grounds v2)
+
+**0a. Teacher gold-standard.** Run `eval.py` on the HiVT-128 teacher to record its `b_scale`, `b_scale_all`,
+`calib_err`, and coverage curve. **Why it matters:** v2's whole job is to make the student match the *teacher's*
+spread, so the teacher's `b`/coverage are literally the target v2 pushes the student toward — without that
+number, "did v2 recover calibration?" has no reference line. It also sanity-checks the v2 premise (if the
+teacher is itself under-covered, v2 inherits that). Because the Task-2 diagnostics now live in
+`validation_step`, **one ordinary `eval.py` run yields the teacher's full calibration profile for free** — no
+special code. (The geometry numbers in the comparison doc predate the diagnostics, so the teacher's
+`b_scale`/coverage genuinely do not exist yet.)
+```bash
+python eval.py --root /home/manya/argoverse --batch_size 128 \
+  --ckpt_path checkpoints/HiVT-128/<...>.ckpt 2>&1 | tee kd_ckpt/_triage_logs/eval_teacher128.log
+# Optional reference ladder: same for HiVT-64 and the standalone HiVT-32.
+```
+⚠️ The teacher ckpt predates the new metric buffers — confirm `eval.py`'s `HiVT.load_from_checkpoint` path
+loads it without a strict-load key error (the KD student evals already worked with the new metrics, so likely
+fine). Record the teacher row; it becomes the reference line on every sharpness/coverage figure.
+
+**0b. Efficiency axis.** Params + measured inference latency/throughput for HiVT-32/64/128 — the "Y% of cost"
+denominator behind "recover X% of accuracy at Y% of cost." Fully independent of training; can run anytime.
+
+### Tier 1 — HEADLINE: v2 distribution-matching loss (`--kd_mode dist`)
+
+This closes the thesis arc. Pre-register the success test **before** running:
+> **v2 succeeds if** it keeps `b_scale`/`calib_err`/coverage near the λ=0 (no-KD) baseline — i.e. moves the
+> student's sharpness back toward the **teacher** measured in 0a — **while retaining most of v1's minFDE/minADE
+> gain.** Ideal outcome: erases the calibration regression (mixNLL ≤ λ=0 baseline) at little geometry cost.
+
+⚠️ **Launcher gotcha (must fix first):** `run_kd_sweep.sh` hardcodes the `python -m KD.train_student_kd` args
+and does **not** forward `--kd_mode`/`--kd_n_samples`, so a v2 run through it silently trains v1 (mean). Either
+add a `KD_MODE=${KD_MODE:-mean}` / `KD_NS` passthrough to the launcher, or call `KD.train_student_kd` directly
+with `--kd_mode dist --kd_n_samples 8`.
+
+Steps:
+1. **Smoke test** — 1 short run (`--kd_mode dist`, tiny subset / few epochs) to confirm it trains, the v2 loss
+   decreases, and nothing NaNs. (Reduces-to-v1 as `b_T→0` is already numerically verified.)
+2. **Triage v2's OWN λ** — v2 loss magnitude ≠ v1, so re-find λ on the *same* `-cal` protocol (25% data, 15 ep,
+   lr=3e-3). Sweep a bracket, e.g. `KLS="0.25 0.5 1.0 2.0"`, in its own wandb group.
+3. **Eval the triage ckpts** with `eval.py` (or `KD.eval_lambda_sweep`) and check the pre-registered criterion
+   against the teacher (0a) and the v1 dose-response table. Pick the λ that best recovers calibration while
+   holding geometry.
+4. **One full-data run** at the chosen v2 λ (64 ep, full data, tmux + watchdog), then `eval.py` → final A/B vs
+   the v1 full-data rows. This is the headline v1-vs-v2 result.
+
+### Tier 2 — refinements, deferrable (do after v2)
+
+- **kl=0.25 full-data run (v1).** On triage λ=0.25 dominated λ=0.5 on every metric; the existing full run used
+  0.5 (past the optimum). A full 64-ep run at λ=0.25 should give better geometry *and* less calibration damage.
+  **But it only relocates the v1 operating point — metrics-improve-while-`b`-shrinks is unchanged — so it is a
+  refinement, not a conclusion-changer. Defer.** When run: `KLS="0.25" SUFFIX="" SUB=full EPOCHS=64 bash
+  KD/run_kd_sweep.sh` (⚠️ verify the launcher honors `SUB=full`/`EPOCHS`; it omits subsample flags when
+  `SUB∈{1,full,""}`).
+- **Multiple seeds (3×)** — only for the final headline geometry A/B; calibration deltas are huge and don't
+  need seeds.
+- **Phase D — emb16 transfer** — re-triage LR, then full runs both arms; tests whether the KD benefit *grows*
+  as the student shrinks.
 
 ## 8. Suggested kickoff prompt for the new conversation
 

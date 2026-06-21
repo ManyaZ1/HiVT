@@ -123,7 +123,7 @@ def log_laplace_coverage(module, coverage: LaplaceCoverage, prog_bar: bool = Fal
     cov = coverage.compute()
     levels = coverage.levels.to(cov)
     for p, c in zip(levels.tolist(), cov.tolist()):
-        module.log(f'val_cov_p{int(round(p * 100)):02d}', c, on_step=False, on_epoch=True)
+        module.log(f'val_cov_p{int(round(p * 100)):02d}', c, on_step=False, on_epoch=True, batch_size=1)
     module.log('val_calib_err', (cov - levels).abs().mean(), prog_bar=prog_bar,
-               on_step=False, on_epoch=True)
+               on_step=False, on_epoch=True, batch_size=1)
     coverage.reset()

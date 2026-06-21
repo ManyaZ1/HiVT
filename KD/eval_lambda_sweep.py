@@ -19,6 +19,7 @@ Usage (one entry per lambda; pick the lowest-val_minFDE ckpt in each dir):
         --entry 1.0=kd_ckpt/triage-emb32-lr3e-3-kl1.0-cal/best/HiVTKD-epoch=14-val_minFDE=1.39.ckpt
 """
 import json
+import os
 from argparse import ArgumentParser
 
 import pytorch_lightning as pl
@@ -106,6 +107,9 @@ def main():
               f"b_scale={sweep[lam].get('b_scale'):.4f} "
               f"calib_err={sweep[lam].get('calib_err'):.4f}")
 
+    out_dir = os.path.dirname(args.out)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     with open(args.out, 'w') as f:
         json.dump(sweep, f, indent=2)
     print(f"wrote {args.out}  ({len(sweep)} lambda points)")
