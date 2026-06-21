@@ -233,6 +233,34 @@ This **independently corroborates the π-entropy result**: kl=0.5's modes are *m
 KD — the modes fan out toward the teacher's distinct mode locations. The overconfidence is **entirely**
 in the per-mode Laplace scales, confirming the "distil means, discard variance" mechanism precisely.
 
+## Teacher gold-standard (calibration target for v2)
+
+`eval.py` on the HiVT-128 teacher (full val), to anchor what "correctly calibrated" looks like:
+
+| (full data) | b_scale | b_scale_all | calib_err | cov@p90 | mixNLL |
+|---|---:|---:|---:|---:|---:|
+| student kl=0.0 (well-cal baseline) | 0.436 | 0.499 | 0.031 | ~0.90 | 28.74 |
+| student kl=0.5 (KD) | **0.302** | 0.339 | 0.157 | ~0.75 | 34.66 |
+| **teacher HiVT-128** | 0.358 | 0.412 | 0.047 | 0.894 | 21.05 |
+
+Two findings that reframe the v2 target:
+
+1. **The teacher is *sharper* than the well-calibrated kl=0 student (b 0.358 < 0.436) yet stays
+   well-calibrated** (calib_err 0.047, p90 coverage 0.894 ≈ nominal). Possible only because its modes are
+   *accurate* — small residuals justify small scales. Sharpness is over-confidence only when the modes
+   aren't accurate enough to earn it.
+2. **The kl=0.5 student over-shot *below* the teacher** (b 0.302 < 0.358): KD made the student *more*
+   confident than the model it distils from, despite being far less accurate. Pure "distil means, discard
+   variance" — nothing holds the scales at a calibrated width.
+
+**Consequence — "match the teacher's b" is NOT the right v2 target.** The teacher is calibrated at b=0.358
+*because it is accurate*; the less-accurate student needs a *larger* b than the teacher to be calibrated (the
+kl=0 student is calibrated at 0.436). So distilling teacher scales (v2) should move the student's b **up**
+from 0.302 toward ~0.358 and cut calib_err — but likely only **partial** recovery, since teacher-level
+sharpness is still slightly too tight for the student's own accuracy. **Pre-registered v2 expectation:
+b ↑ toward the teacher, calib_err ↓ toward ~0.05 — partial, not necessarily full, recovery.** (mixNLL 21.05
+is the teacher's full-distribution ceiling; no emb32 student will reach it.)
+
 ## Metrics to add (the mixNLL story demands measuring the mechanism)
 
 - **Sharpness** — mean predicted Laplace scale `b`. The smoking gun: v1 should visibly shrink it; v2 should not. Cheap to log.
