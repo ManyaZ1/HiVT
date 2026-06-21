@@ -76,6 +76,9 @@ def main():
                          'is initialized aborts them (SIGABRT). 0 = load in the '
                          'main process, no fork.')
     ap.add_argument('--gpus', type=int, default=1)
+    ap.add_argument('--pin_memory', action='store_true',
+                    help='Off by default: pinned (page-locked) RAM cannot be '
+                         'paged out, which is dangerous on a memory-tight host.')
     ap.add_argument('--out', required=True, help='output sweep JSON path')
     ap.add_argument('--entry', action='append', required=True,
                     metavar='LAMBDA=CKPT', help='repeatable; e.g. 0.25=path/to.ckpt')
@@ -96,7 +99,7 @@ def main():
     for lam, ckpt in pairs:
         model = load_hivt(ckpt)
         loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False,
-                            num_workers=args.num_workers, pin_memory=True,
+                            num_workers=args.num_workers, pin_memory=args.pin_memory,
                             persistent_workers=args.num_workers > 0)
         trainer = pl.Trainer(gpus=args.gpus, logger=False)
         results = trainer.validate(model, loader)[0]   # dict of val_* metrics
