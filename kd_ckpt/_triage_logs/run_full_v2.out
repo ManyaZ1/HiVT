@@ -1,0 +1,4 @@
+[full-v2] mode=dist KLS=0.5 epochs=64 workers=4 mem_abort=9.0GB group=full-emb32-distv2
+================= emb32-bs128-lkl0.5-distv2-full =================
+[full-v2] emb32-bs128-lkl0.5-distv2-full finished (or gave up). log: kd_ckpt/_triage_logs/emb32-bs128-lkl0.5-distv2-full.log
+[full-v2] ALL DONE — group full-emb32-distv2

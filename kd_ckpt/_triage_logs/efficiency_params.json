@@ -1,0 +1,29 @@
+{
+  "teacher-128": {
+    "embed_dim": 128,
+    "params": {
+      "total": 2559993,
+      "local_encoder": 1434624,
+      "global_interactor": 993152,
+      "decoder": 132217
+    }
+  },
+  "student-32": {
+    "embed_dim": 32,
+    "params": {
+      "total": 170073,
+      "local_encoder": 94464,
+      "global_interactor": 63968,
+      "decoder": 11641
+    }
+  },
+  "student-16": {
+    "embed_dim": 16,
+    "params": {
+      "total": 45929,
+      "local_encoder": 25216,
+      "global_interactor": 16624,
+      "decoder": 4089
+    }
+  }
+}

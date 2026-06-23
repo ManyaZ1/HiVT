@@ -19,10 +19,15 @@ ROOT=/home/manya/argoverse
 TEACHER=/home/manya/HiVT/teacher_outputs/train_fix.h5   # verified-good cache
 LR=${LR:-3e-3}
 KLS=${KLS:-"0.0 0.5 1.0"}
-SUFFIX=${SUFFIX:--cal}                                   # appended to every run_name
+KD_MODE=${KD_MODE:-mean}                                 # mean = v1 (default); dist = v2 distribution-matching
+KD_NSAMPLES=${KD_NSAMPLES:-8}                            # MC samples per teacher mode (only used by kd_mode=dist)
+# Default SUFFIX is mode-aware so v2 (dist) runs never collide with v1 (-cal) ckpts.
+_DEF_SUFFIX=-cal; [[ "$KD_MODE" == dist ]] && _DEF_SUFFIX=-distv2
+SUFFIX=${SUFFIX:-$_DEF_SUFFIX}                           # appended to every run_name
 GROUP=${GROUP:-triage-kd-emb32-lr${LR}${SUFFIX}}
 EPOCHS=${EPOCHS:-15}                                     # also used as T_max
 SUB=${SUB:-0.25}                                         # 1 / "" / full => use the whole dataset
+NUM_WORKERS=${NUM_WORKERS:-8}                            # lower (e.g. 4) on a memory-tight host
 CKPT_EVERY=${CKPT_EVERY:-50}
 LOGDIR=kd_ckpt/_triage_logs
 mkdir -p "$LOGDIR"
@@ -33,7 +38,7 @@ if [[ -n "$SUB" && "$SUB" != "1" && "$SUB" != "full" ]]; then
   SUB_ARGS=(--train_subsample "$SUB" --val_subsample "$SUB")
 fi
 
-echo "[kd-sweep] LR=$LR  KLS=$KLS  epochs=$EPOCHS  sub=${SUB:-full}  group=$GROUP"
+echo "[kd-sweep] LR=$LR  KLS=$KLS  kd_mode=$KD_MODE  epochs=$EPOCHS  sub=${SUB:-full}  workers=$NUM_WORKERS  group=$GROUP"
 for KL in $KLS; do
   RUN_NAME="triage-emb32-lr${LR}-kl${KL}${SUFFIX}"
   echo "=================================================================="
@@ -46,12 +51,14 @@ for KL in $KLS; do
     --batch_size 128 \
     --lr "$LR" \
     --lambda_kl "$KL" \
+    --kd_mode "$KD_MODE" \
+    --kd_n_samples "$KD_NSAMPLES" \
     "${SUB_ARGS[@]}" \
     --max_epochs "$EPOCHS" \
     --T_max "$EPOCHS" \
     --precision bf16 \
     --gpus 1 \
-    --num_workers 8 \
+    --num_workers "$NUM_WORKERS" \
     --checkpoint_every_n_epochs "$CKPT_EVERY" \
     --wandb_project hivt-kd \
     --wandb_group "$GROUP" \
