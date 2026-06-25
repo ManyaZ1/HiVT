@@ -1,3 +1,13 @@
+
+# HiVT params - embed dim
+| model | embed | params | vs teacher|
+|-------|-------|--------|-----------|
+teacher-128| 128| 2,559,993| 100% (1×)
+model-64| 64| 653,369| 25.5% (4× smaller)
+student-32| 32| 170,073| 6.6% (15× smaller)
+student-16| 16| 45,929| 1.8% (55× smaller)
+
+
 # HiVT - 32 
 
 ## HiVT-32 attention heads 2 vs attention heads 8 (no KD) kl=0.0
@@ -23,8 +33,9 @@ Lower is better for every row except `reg_loss` (more negative = better); for `b
 
 ### Reading it
 
-- **Geometry is a dead heat.** minADE, minFDE, minMR, and both brier variants all move <1.5% and the differences flip sign — this is single-run noise, not a real gap. Dropping from 8 heads to 2 (head dim 4→16) costs essentially **nothing** on displacement at emb32. With 32 channels there isn't enough width for 8 heads to express more than 2.
+- **Geometry shows no improvement.** minADE, minFDE, minMR, and both brier variants all move <1.5% and the differences flip sign — this is single-run noise, not a real gap. Dropping from 8 heads to 2 (head dim 4→16) costs essentially **nothing** on displacement at emb32. With 32 channels there isn't enough width for 8 heads to express more than 2.
 - **Calibration is the only metric the user flagged, and it differs.** 2-head `calib_err` is 0.0316 vs 8-head 0.0362 (−12.8%), with `b_scale` essentially equal (0.416 vs 0.413) and `mixNLL` within 0.7%. So the 2-head model is, if anything, *marginally better calibrated* — but both are firmly in the well-calibrated regime (cf. the KD kl=0.5 collapse to calib_err 0.18 / b_scale 0.27). This ~13% gap is plausibly still single-run variance; it is **not** the order-of-magnitude effect KD produces. To claim it as real you'd need multiple seeds.
 
 **Bottom line:** at emb32, 2 attention heads matches 8 on geometry and calibration alike — head count is not a meaningful lever here, so the fair KD baseline can use either without affecting the comparison.
 
+# HiVT 16
