@@ -1,0 +1,56 @@
+{
+  "teacher-128": {
+    "embed_dim": 128,
+    "params": {
+      "total": 2559993,
+      "local_encoder": 1434624,
+      "global_interactor": 993152,
+      "decoder": 132217
+    },
+    "latency": {
+      "batch_ms_median": 196.7042550095357,
+      "batch_ms_mean": 472.40394653393497,
+      "batch_ms_min": 194.21680399682373,
+      "peak_mem_mb": 3409.84765625,
+      "scene_ms_median": 1.5367519922619977
+    },
+    "batch_size": 128,
+    "scenes_in_batch": 128
+  },
+  "student-32": {
+    "embed_dim": 32,
+    "params": {
+      "total": 170073,
+      "local_encoder": 94464,
+      "global_interactor": 63968,
+      "decoder": 11641
+    },
+    "latency": {
+      "batch_ms_median": 199.86820498888846,
+      "batch_ms_mean": 227.49405129822358,
+      "batch_ms_min": 106.22242999670561,
+      "peak_mem_mb": 954.27783203125,
+      "scene_ms_median": 1.5614703514756911
+    },
+    "batch_size": 128,
+    "scenes_in_batch": 128
+  },
+  "student-16": {
+    "embed_dim": 16,
+    "params": {
+      "total": 45929,
+      "local_encoder": 25216,
+      "global_interactor": 16624,
+      "decoder": 4089
+    },
+    "latency": {
+      "batch_ms_median": 181.10783700831234,
+      "batch_ms_mean": 203.0984686653634,
+      "batch_ms_min": 96.82894400611985,
+      "peak_mem_mb": 543.45849609375,
+      "scene_ms_median": 1.4149049766274402
+    },
+    "batch_size": 128,
+    "scenes_in_batch": 128
+  }
+}

@@ -8,14 +8,14 @@
       "decoder": 132217
     },
     "latency": {
-      "batch_ms_median": 20.816770993405953,
-      "batch_ms_mean": 22.309200400680613,
-      "batch_ms_min": 18.279612995684147,
+      "batch_ms_median": 128.55025399767328,
+      "batch_ms_mean": 132.12036003436273,
+      "batch_ms_min": 118.85671901109163,
       "peak_mem_mb": null,
-      "scene_ms_median": 20.816770993405953
+      "scene_ms_median": 16.06878174970916
     },
-    "batch_size": 1,
-    "scenes_in_batch": 1
+    "batch_size": 8,
+    "scenes_in_batch": 8
   },
   "student-32": {
     "embed_dim": 32,
@@ -26,14 +26,14 @@
       "decoder": 11641
     },
     "latency": {
-      "batch_ms_median": 6.861870002467185,
-      "batch_ms_mean": 7.756134201675498,
-      "batch_ms_min": 6.318590007140301,
+      "batch_ms_median": 23.57126299466472,
+      "batch_ms_mean": 24.294561065228965,
+      "batch_ms_min": 20.764076994964853,
       "peak_mem_mb": null,
-      "scene_ms_median": 6.861870002467185
+      "scene_ms_median": 2.94640787433309
     },
-    "batch_size": 1,
-    "scenes_in_batch": 1
+    "batch_size": 8,
+    "scenes_in_batch": 8
   },
   "student-16": {
     "embed_dim": 16,
@@ -44,13 +44,13 @@
       "decoder": 4089
     },
     "latency": {
-      "batch_ms_median": 6.111401002272032,
-      "batch_ms_mean": 6.149878966001173,
-      "batch_ms_min": 5.808444999274798,
+      "batch_ms_median": 17.082738006138243,
+      "batch_ms_mean": 19.444645468805295,
+      "batch_ms_min": 15.3474030084908,
       "peak_mem_mb": null,
-      "scene_ms_median": 6.111401002272032
+      "scene_ms_median": 2.1353422507672803
     },
-    "batch_size": 1,
-    "scenes_in_batch": 1
+    "batch_size": 8,
+    "scenes_in_batch": 8
   }
 }
