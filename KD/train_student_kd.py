@@ -21,9 +21,6 @@ from KD.kd_datamodule import KDDataModule
 
 if __name__ == "__main__":
     import argparse
-    # Match train.py's seed so KD runs are reproducible and comparable to the
-    # HiVT-32 baseline (a small KD effect can otherwise be lost in init noise).
-    pl.seed_everything(2022)
     parser = argparse.ArgumentParser()
     parser = HiVTKD.add_model_specific_args(parser)   # HiVT args + KD args
     parser = KDDataModule.add_argparse_args(parser)
@@ -34,8 +31,18 @@ if __name__ == "__main__":
                         help="wandb group to bucket related runs (e.g. a lambda_kl sweep).")
     parser.add_argument("--run_name", type=str, default=None,
                         help="Run name; also the checkpoint subfolder under kd_ckpt/. "
-                             "Defaults to emb<E>-bs<B>-lkl<L>.")
+                             "Defaults to emb<E>-bs<B>-lkl<L> (with -s<seed> appended "
+                             "when --seed is not the default).")
+    parser.add_argument("--seed", type=int, default=2022,
+                        help="Global RNG seed (pl.seed_everything). Default 2022 matches "
+                             "train.py and the original single-seed KD runs; vary it "
+                             "(e.g. 1, 2, 3) for multi-seed robustness studies.")
     args = parser.parse_args()
+
+    # Seed BEFORE any model/data construction so weight init and data shuffling are
+    # reproducible. Default 2022 reproduces the original runs exactly (a small KD
+    # effect can otherwise be lost in init noise, so this matters for comparability).
+    pl.seed_everything(args.seed)
 
     # Read teacher param count for wandb config. Support every cache layout:
     #   - directory cache:            <teacher_dir>/manifest.json
@@ -78,6 +85,10 @@ if __name__ == "__main__":
     # so read the generic flag here for naming.
     _bs = getattr(args, "batch_size", None) or args.train_batch_size
     run_name = args.run_name or f"emb{args.embed_dim}-bs{_bs}-lkl{args.lambda_kl}"
+    # Keep seed-varied runs in distinct checkpoint dirs so they never collide with
+    # (or auto-resume) the default-seed run. Explicit --run_name is left untouched.
+    if args.run_name is None and args.seed != 2022:
+        run_name += f"-s{args.seed}"
 
     # Auto-resume (decided BEFORE building the logger so wandb can resume too):
     # if a previous run of this run_name left a last.ckpt, continue from it

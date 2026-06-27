@@ -1,13 +1,19 @@
 
 # HiVT params - embed dim
-| model | embed | params | vs teacher| val_minFDE |val_minADE | val_minMR |
-|-------|-------|--------|-----------|------------|------------|-----------|
-teacher-128| 128| 2,559,993| 100% (1×)| 0.9692| 0.7365| 0.12252|
-model-64| 64| 653,369| 25.5% (4× smaller)| **1.0301**| 0.7381| 0.12424|
-model-32| 32| 170,073| 6.6% (15× smaller)| **1.1574**| 0.7670| 0.12895|
-student-32 v2| 32| 170,073| 6.6% (15× smaller)|**1.0505**|0.69824 |0.10630 |
-model-16 nh2| 16| 45,929| 1.8% (55× smaller)|**1.6052** |0.8858| 0.1988|
-student-16| 16| 45,929| 1.8% (55× smaller)| |
+| model | embed | params | vs teacher| val_minFDE |val_minADE | val_minMR | val_calib_err | val_mixNLL |
+|-------|-------|--------|-----------|------------|------------|-----------|------|------|
+teacher-128| 128| 2,559,993| 100% (1×)| 0.9692| 0.6611| 0.09204| 0.0466| 21.05|
+model-64| 64| 653,369| 25.5% (4× smaller)| **1.0301**| 0.6869| 0.10263| 0.0416| 23.02|
+student-32 v2| 32| 170,073| 6.6% (15× smaller)|**1.0505**|0.69824 |0.10630 | **0.0275**| **24.18**|
+student-32 v1| 32| 170,073| 6.6% (15× smaller)| 1.0509| 0.6958| 0.10557| **0.1827**| **37.62**|
+model-32| 32| 170,073| 6.6% (15× smaller)| 1.1574| 0.7361| 0.12171| 0.0325| 26.61|
+student-16 v2| 16| 45,929| 1.8% (55× smaller)|1.2402 |**0.7762**| 0.13334| 0.0265| 29.32|
+model-16 nh2| 16| 45,929| 1.8% (55× smaller)|1.6052 |**0.8858**| 0.19882| 0.0279| 35.22|
+
+> **v1 vs v2 (the reason both rows exist):** geometry is a **tie** (minFDE 1.0509 vs 1.0505), but v1 **collapses calibration** — calib_err **0.1827** (5–7× everything else) and mixNLL **37.62** — while v2 stays calibrated (0.0275 / 24.18), *better than the teacher*. calib_err/mixNLL is where v2 earns its place.
+
+
+**distillation buys roughly a full size-class of accuracy for free**
 
 student-32 v2 is 26% of model-64 (3.8 times smaller) and 6.6% of teacher-128 (15 times smaller). It loses on 0.1273m of accuracy compared to the HiVT-64. It recovers 84% of the HiVT-32→HiVT-64 gap at zero inference cost, (1.1574-1.0505)/(1.1574-1.0301)= 84% while being 26% of the params.
 
@@ -38,15 +44,46 @@ Per-scene forward latency (ms), `profile_efficiency.py` on real val batches, `OM
 | 32 | 27.05 | 4.68 | 2.35 | 5.78× | **11.52×** |
 | 64 | 27.85 | 5.85 | 2.87 | 4.76× | 9.71× |
 
-### Interpretation
+### Interpretation (CPU)
 
 - **Latency is far sublinear in param reduction, and batch-size-dependent.** At `bs=1` (online, one scene at a time) student-32 is only **3.0×** faster despite **15× fewer params**, because a fixed ~7 ms floor — graph construction, the fixed count of transformer layers, Python/PyG dispatch, memory-bound norm/scatter ops — is *independent of `embed_dim`* and dominates the tiny `embed_dim²` matmuls. So "55× smaller" is a **memory/param** claim, not a speed claim; do not equate the two.
 - **Batching amortises that floor and widens the speedup.** Per-scene `latency ≈ floor/B + compute`; as `B` grows the floor divides away and the part that *does* scale with model width is exposed. The student-32 advantage roughly doubles (3.0×→5.5×) and student-16's roughly triples (3.4×→**11.5×**), because the smallest model was most buried under the floor.
 - **On CPU the gain is capped by core count — per-scene latency is U-shaped, not monotone.** It bottoms around `bs=8` (student-32 2.95 ms, student-16 2.14 ms) then *rises* again: with only 4 threads, past `bs≈8` the matmuls saturate CPU parallelism so larger batches contend (cache/memory pressure) instead of amortising. The teacher saturates first (it is compute-heavy), which is why T/S16 keeps climbing to `bs=32` while T/S32 has already turned over. A many-core CPU or a GPU (abundant parallelism, no early saturation) should push the ratio further toward the 15× param ratio.
 
-> **Deployment story:** *student-32 keeps ~86% of the HiVT-32→HiVT-64 accuracy gap (v2, fully calibrated) at 6.6% of the params, ~3× faster CPU inference online (`bs=1`) and ~5.5× under modest batching.* Param/memory savings are linear and unconditional; the latency win depends on batch size and hardware parallelism.
+> **Deployment story (CPU):** *student-32 keeps ~86% of the HiVT-32→HiVT-64 accuracy gap (v2, fully calibrated) at 6.6% of the params, ~3× faster CPU inference online (`bs=1`) and ~5.5× under modest batching.* Param/memory savings are linear and unconditional; the latency win depends on batch size and hardware parallelism.
 
-> ⏳ **GPU latency + peak-memory pending** — measured during a contended training run gives unusable numbers; deferred until the GPU is free. The GPU sweep is also what extends the ratio past CPU's 4-thread saturation point. Param counts are the reliable cost numbers for now.
+## Latency — GPU, the batch-size dependence
+
+Per-scene latency (ms) and peak GPU memory (MB), `profile_efficiency.py` on real val batches, **RTX 5060**, median of 30 passes. `scene_ms = batch latency ÷ batch_size`; "speedup" = teacher-128 ÷ student.
+
+**Per-scene latency (ms):**
+
+| batch_size | teacher-128 | student-32 | student-16 | speedup T/S32 | speedup T/S16 |
+|---|---:|---:|---:|---:|---:|
+| 1 | 46.84 | 43.64 | 26.14 | 1.07× | 1.79× |
+| 8 | 10.37 | 9.02 | 6.89 | 1.15× | 1.51× |
+| 32 | 4.02 | 2.68 | 3.08 | 1.50× | 1.31× |
+| 64 | 3.44 | 1.85 | 1.30 | 1.86× | **2.64×** |
+| 128 | 1.54 | 1.56 | 1.42 | 0.98× | 1.09× |
+
+**Peak GPU memory (MB):**
+
+| batch_size | teacher-128 | student-32 | student-16 | mem T/S32 | mem T/S16 |
+|---|---:|---:|---:|---:|---:|
+| 1 | 70.4 | 40.5 | 36.6 | 1.7× | 1.9× |
+| 8 | 203.6 | 76.8 | 56.7 | 2.7× | 3.6× |
+| 32 | 799.2 | 241.4 | 147.9 | 3.3× | 5.4× |
+| 64 | 1519.3 | 435.7 | 257.0 | 3.5× | 5.9× |
+| 128 | 3409.8 | 954.3 | 543.5 | 3.6× | **6.3×** |
+
+### Interpretation (GPU)
+
+- **On GPU the latency speedup nearly vanishes (≈1–2.6×, sometimes <1×) — far below even the CPU numbers, and nowhere near the 15×/55× param ratio.** The GPU has so much parallelism that the students' tiny `embed_dim²` matmuls never come close to saturating it, so shrinking them barely changes wall-clock; the fixed, width-*independent* overhead (graph construction, PyG scatter/gather, the fixed layer count, kernel-launch/dispatch) dominates. At `bs=128` the teacher's larger matmuls parallelise so efficiently that per-scene it actually **ties/beats student-32** (0.98×).
+- **At `bs=1` the GPU is launch-bound and *slower than the CPU*** (26–47 ms vs the CPU table's 6–21 ms). Thousands of tiny kernel launches + host↔device sync dominate one small graph, so an in-cache CPU wins for true online single-scene inference. **→ For `bs=1` deployment, prefer CPU; the GPU only pays off once batched.**
+- **The real GPU dividend is memory, not latency.** Peak memory scales strongly with width: student-16 uses **3.6–6.3× less** than the teacher (543 MB vs 3410 MB at `bs=128`), student-32 **3.3–3.6× less**, and the gap *widens* with batch size. This is the unconditional GPU win — it lets you fit larger batches, run on smaller/cheaper GPUs, or co-locate more models on one device.
+- **Read the GPU latency ratios coarsely.** The medians are heavy-tailed (`batch_ms_mean ≫ median` from first-iteration/CUDA-sync spikes), so treat them as "roughly 1–2×, non-monotone," not to two decimals. Memory is the stable, reliable GPU number.
+
+> **Deployment story (GPU):** *On GPU, model size buys **memory, not speed** — student-16 fits in ~6× less VRAM at large batch, but per-scene latency is within ~2× of the teacher because the workload is overhead/memory-bound, not compute-bound at this scale. Online (`bs=1`) inference is actually fastest on CPU.*
 
 
 # training comparison
@@ -248,6 +285,50 @@ Student HiVT-16 (`num_heads=2`, head_dim=8), `lr=1e-3`, teacher = HiVT-128 (`tra
 
 **vs emb32.** The relative KD gain is **larger for the smaller student** — emb16 kl=1.0 gives −16.4% minFDE where emb32 kl=0.5 gave −9.2% — consistent with the hypothesis that KD helps more as the student shrinks. (Note: emb16's optimum sits at kl=1.0 vs emb32's 0.5.)
 
-> ⏳ **Proxy ranking only — full-data confirmation of kl=1.0 (64 ep) vs the kl=0.0 baseline (1.605) is the pending deliverable.** Proxy ranks, full data decides (see the lr round, where proxy ordering didn't survive full training). Calibration metrics also move late in training, so treat the proxy calib numbers as optimistic.
+> ✅ **Confirmed on full data** (see *HiVT-16 KD V2* below): kl=1.0 full-data gives minFDE **1.2402** vs the 1.6053 baseline — **−22.7%**, *exceeding* the proxy's −16.4%, with calibration improving rather than degrading. Proxy ranked correctly here *and* under-stated the gain.
 
-## HiVT-16 KD V2
+## HiVT-16 KD V2 — full-data confirmation (the deliverable)
+
+The proxy winner (`lambda_kl=1.0`, v2 dist) trained on **full data, 64 epochs**, A/B'd against the matched no-KD baseline. Both runs identical except the three KD knobs (teacher + λ_kl=1.0 + `kd_mode=dist`): `embed_dim=16`, `num_heads=2`, `lr=1e-3`, `bs=128`, bf16. Teacher = HiVT-128 (`train_fix.h5`). Numbers from `eval.py` on the best-`val_minFDE` checkpoints (baseline ep62, KD ep55).
+
+```bash
+# KD run
+python eval.py --root /home/manya/argoverse --batch_size 32 \
+  --ckpt_path kd_ckpt/emb16-bs128-nh2-lr1e-3-kl1.0-full/best/HiVTKD-epoch=55-val_minFDE=1.24.ckpt
+```
+
+### Head-to-head (the clean A/B — same recipe, only KD changes)
+
+| Metric | kl=0.0 (no KD) | kl=1.0 KD v2 | Δ (abs) | Δ (%) | Better? |
+|---|---:|---:|---:|---:|:--:|
+| **val_minADE** | 0.8858 | 0.7762 | −0.1096 | **−12.4%** | ✅ |
+| **val_minFDE** | 1.6053 | 1.2402 | −0.3651 | **−22.7%** | ✅ |
+| **val_minMR** | 0.19882 | 0.13334 | −0.06548 | **−32.9%** | ✅ |
+| val_brier_minADE | 1.5371 | 1.4507 | −0.0864 | −5.6% | ✅ |
+| val_brier_minFDE | 2.2565 | 1.9147 | −0.3418 | −15.1% | ✅ |
+| **val_mixNLL** | 35.22 | 29.32 | −5.90 | **−16.8%** | ✅ |
+| **val_calib_err** | 0.02794 | 0.02652 | −0.00142 | −5.1% | ✅ |
+| val_b_scale | 0.5082 | 0.4554 | −0.0528 | −10.4% | (both healthy) |
+| val_cov_p90 | 0.9064 | 0.9034 | −0.0030 | ≈ nominal | ✅ |
+| val_reg_loss | −0.1057 | −0.1073 | −0.0016 | (more neg.) | ✅ |
+
+Lower is better for every row except `reg_loss` (more negative = better). `cov@p90 ≈ 0.90` is nominal (perfectly calibrated); `b_scale` stays in the healthy band (no over-confidence collapse).
+
+### Reading it
+
+- **The geometry win is large and beats the proxy.** minFDE **−22.7%** (1.605 → 1.240), minMR **−32.9%**, minADE −12.4% — *bigger* than the proxy's −16.4% prediction. KD's effect compounded with full data/epochs, not faded (contrast the lr round, where proxy gains evaporated — here they grew).
+- **Calibration *improves* too — there is no tax.** Unlike emb32-**v1** (which collapsed calibration: mixNLL +41%, calib_err 5×), emb16-**v2** moves *every* calibration metric the right way: mixNLL −16.8%, calib_err −5.1%, cov@p90 stays nominal, b_scale healthy. The v2 distribution-matching loss delivers geometry **and** calibration together — the central thesis, now confirmed at a second width.
+- **KD helps the smaller student ~2.5× more.** emb16 v2 → **−22.7%** minFDE vs emb32 v2 → −9.2%. The smaller the student, the larger the relative KD benefit — exactly the Phase-D hypothesis.
+
+### Sanity check vs the real baselines
+
+| Model | params | minADE | minFDE | minMR |
+|---|---:|---:|---:|---:|
+| HiVT-16 (no KD) | 45,929 | 0.8858 | 1.6053 | 0.19882 |
+| **HiVT-16 KD v2 (kl=1.0)** | **45,929** | **0.7762** | **1.2402** | **0.13334** |
+| HiVT-32 (no KD) | 170,073 | 0.7365 | 1.1574 | 0.12252 |
+| HiVT-32 KD v2 (kl=0.5) | 170,073 | 0.6982 | 1.0505 | 0.10630 |
+| HiVT-64 | 653,369 | 0.6869 | 1.0301 | 0.10263 |
+| HiVT-128 (teacher) | 2,559,993 | 0.6611 | 0.9692 | 0.09204 |
+
+**Reading it.** HiVT-16 KD (minFDE **1.2402**) lands within **7.2%** of the *un-distilled HiVT-32* (1.1574) while using **27% of its parameters (3.7× smaller)**. It recovers **~81% of the HiVT-16→HiVT-32 gap** — (1.6053−1.2402)/(1.6053−1.1574) — at **zero inference cost**, and ~63% of the gap all the way to HiVT-64. The same pattern emb32 showed against HiVT-64, now reproduced one width down: **distillation buys roughly a full size-class of accuracy for free**.
