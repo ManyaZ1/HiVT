@@ -1,3 +1,7 @@
+# fork from HiVT: implementing Knowledge Distillation
+In the fix/permutation_invariant_loss_branch KD v1 and v2 were implemented and tested 
+<img width="1128" height="755" alt="image" src="https://github.com/user-attachments/assets/7857231d-cb47-4e1d-b9c3-2cb812c65d05" />
+
 # HiVT: Hierarchical Vector Transformer for Multi-Agent Motion Prediction
 This repository contains the official implementation of [HiVT: Hierarchical Vector Transformer for Multi-Agent Motion Prediction](https://openaccess.thecvf.com/content/CVPR2022/papers/Zhou_HiVT_Hierarchical_Vector_Transformer_for_Multi-Agent_Motion_Prediction_CVPR_2022_paper.pdf) published in CVPR 2022.
 
