@@ -1,0 +1,227 @@
+% !TEX root = ../main.tex
+% ============================================================================
+% Implementation & Experimental Setup
+% ============================================================================
+\chapter{Implementation and Experimental Setup}
+\label{ch:impl}
+
+Chapter~\ref{ch:method} defined the distillation objective mathematically. This
+chapter describes how that objective is realised as a working training pipeline
+(Section~\ref{sec:impl}) and the experimental protocol under which it is evaluated
+(Section~\ref{sec:setup}). The implementation detail matters more than usual here:
+distillation can fail \emph{silently}---a mis-scaled, mis-aligned, or
+numerically-unstable signal still produces a plausible-looking loss curve---so a
+substantial part of the engineering is the machinery that guarantees the intended
+signal, and only that signal, reaches the student.
+
+\section{Implementation}
+\label{sec:impl}
+
+\subsection{Pipeline overview}
+\label{ssec:impl_overview}
+The distillation pipeline is built on top of the public HiVT codebase and adds four
+stages: (i) an \emph{offline teacher-caching} pass that records the frozen
+teacher's predictions for every training scene; (ii) a \emph{KD dataset/datamodule}
+that joins those cached targets to the corresponding student inputs at load time;
+(iii) a \emph{KD training module} that wraps an ordinary HiVT student and adds the
+distillation term to its loss; and (iv) an \emph{evaluation and diagnostics} layer
+that reports both geometric and calibration metrics. Stages are decoupled: because
+the teacher is frozen, its forward passes are computed once and reused across every
+student run and hyperparameter setting, so the marginal cost of an additional
+student experiment is just the student's own training.
+
+\subsection{Offline teacher caching}
+\label{ssec:impl_cache}
+The teacher (HiVT-128) is run once over the full training split and its predictions
+are written to a single HDF5 store. For each scene, indexed by its sequence id, the
+cache holds the focal agent's mixture parameters: the per-mode Laplace locations
+($\loc^T_f$, shape $[F,H,2]$), the per-mode scales ($\scale^T_f$, $[F,H,2]$), and
+the raw mode logits ($\pi^T_f$, $[F]$). Storing the parameters---rather than
+re-running the teacher each step---makes the per-epoch teacher cost effectively
+zero and decouples student training speed from teacher size, which is what allows
+the $55\times$-smaller student to be trained at full speed against a large teacher.
+
+A subtle correctness hazard lives in this stage. HiVT emits a trajectory for
+\emph{every} actor in a scene in one batched forward pass, and the framework stacks
+all scenes' actors into one node dimension; the focal agent must be recovered via
+the batched focal-agent index. An early version of the cache indexed by scene
+position instead, silently saving an arbitrary (mostly scene-0) actor's trajectory
+under each sequence id---a defect that leaves training loss looking normal while
+distilling against the wrong agent entirely. The cache is therefore written by
+explicitly selecting the focal agent's node, in its rotated-local reference frame,
+and the loss-formation step (Section~\ref{ssec:impl_loss}) re-asserts the
+alignment. This is the practical face of the silent-failure problem flagged above.
+
+\subsection{The distillation loss module}
+\label{ssec:impl_loss}
+At train time, the KD module wraps a standard HiVT student and forms the combined
+objective $\mathcal{L}=\lambda_{\text{task}}\,\mathcal{L}_{\mathrm{HiVT}} +
+\lambda_{\text{kl}}\,\mathcal{L}_{\mathrm{KD}}$ (Eq.~\ref{eq:total}, with
+$\lambda_{\text{task}}{=}1$ throughout and $\lambda_{\text{kl}}$ the swept
+distillation weight). Three details make the term match its mathematical
+definition:
+
+\paragraph{Focal-agent slicing and an alignment assertion.}
+The student's predictions are sliced to the focal agent using the same batched
+index used to build the cache, and the resulting student tensor is checked against
+the cached teacher tensor with an explicit shape assertion before the loss is
+formed. Any batch/horizon/coordinate mismatch---the signature of a re-introduced
+alignment bug---then fails loudly rather than training silently on garbage.
+
+\paragraph{Mixture log-density in log-space.}
+Both objectives evaluate the student mixture log-density
+$\log p_S(\mathbf{y})=\log\sum_k \pi^S_k\,\Lap(\mathbf{y}\mid\loc^S_k,\scale^S_k)$.
+This is computed entirely in log-space: per-element Laplace log-densities
+$-\log(2b)-|y-\mu|/b$ are summed over horizon and coordinates, the student
+log-mixture-weights (a log-softmax of the logits) are added, and the modes are
+reduced with a numerically-stable \texttt{logsumexp}. This avoids underflow when
+individual component densities are tiny---common when a teacher target lands far
+from a student mode---which would otherwise produce \texttt{NaN} gradients.
+
+\paragraph{Monte-Carlo sampling for v2.}
+The mean-target loss (v1) scores the teacher locations $\loc^T_f$ directly under
+$p_S$. The distribution-matching loss (v2) instead draws $S{=}8$ samples per teacher
+mode from $\Lap(\loc^T_f,\scale^T_f)$ using reparameterised inverse-CDF Laplace
+sampling, evaluates $\log p_S$ at each, and averages---the Monte-Carlo estimate of
+the expectation in Eq.~\ref{eq:v2}. Each teacher mode's contribution is weighted by
+its softmax confidence $\pi^T_f$, realising the confidence-weighted soft-target set
+of Section~\ref{ssec:method_pi}.
+
+\subsection{Evaluation and silent-failure diagnostics}
+\label{ssec:impl_diag}
+Because a wrong distillation signal need not perturb the loss curve, the pipeline is
+instrumented with diagnostics designed to expose exactly the failure modes the
+method is sensitive to. Alongside the geometric metrics, evaluation reports the mean
+predicted scale ($b$-scale, to detect over-confident shrinkage), reliability and
+coverage curves (to detect mis-calibration), mode-weight entropy (to distinguish a
+scale pathology from a collapse of the mixture weights), and an offline
+mode-diversity measure (to detect a student mimicking only the teacher's dominant
+mode). A separate, training-free diagnostic verifies the premise of the whole method
+by computing the optimal per-scene teacher--student mode assignment
+(Section~\ref{ssec:method_perm}); its output is the assignment matrix of
+Figure~\ref{fig:perm}. These diagnostics are what turn the theoretical predictions
+of Chapter~\ref{ch:method} into falsifiable checks, and their results are reported
+throughout Chapter~\ref{ch:results}.
+
+\section{Experimental Setup}
+\label{sec:setup}
+
+\subsection{Dataset}
+\label{ssec:setup_data}
+All experiments use the Argoverse~1 motion-forecasting
+benchmark~\cite{chang2019argoverse}, the dataset HiVT was designed for. Each
+sequence provides the tracked trajectories of all agents in an urban driving scene
+together with an HD map, sampled at $10$~Hz. The task is to observe the first
+$2$~seconds ($20$ steps) and predict the next $3$~seconds ($30$ steps, so $H=30$)
+for a single designated focal agent. The benchmark provides $205{,}942$ training
+and $39{,}472$ validation sequences. Models are trained on the training split and
+all reported numbers are computed on the validation split, on which ground truth is
+available; the held-out test split is evaluated only through the official
+leaderboard and is not used here.
+
+\subsection{Metrics}
+\label{ssec:setup_metrics}
+Following the benchmark, the model emits $K=6$ trajectory modes per agent.
+Evaluation spans two complementary groups.
+
+\paragraph{Geometric (best-of-$K$) accuracy.}
+These measure whether \emph{any} predicted mode is close to the ground truth.
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{minADE}$_K$ --- the average displacement error (mean over the $H$
+        steps) of the best of the $K$ modes.
+  \item \textbf{minFDE}$_K$ --- the displacement error at the final predicted step
+        of the best mode; the primary geometric metric in this work.
+  \item \textbf{MR} (miss rate) --- the fraction of scenes whose best mode's final
+        point exceeds $2$~m from the ground truth.
+  \item \textbf{brier-minFDE} --- the official Argoverse ranking metric, minFDE
+        augmented by a Brier penalty $(1-\pi_{k^\star})^2$ that rewards assigning
+        high probability to the best mode, thereby coupling geometry to the mode
+        weights.
+\end{itemize}
+
+\paragraph{Calibration (full-distribution) quality.}
+Best-of-$K$ metrics ignore the predicted \emph{uncertainty}; the following probe
+whether the full mixture is honest, which matters because a downstream planner
+consumes the distribution, not just the best mode.
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{mixNLL} --- the negative log-likelihood of the ground truth under
+        the full predicted mixture~\eqref{eq:mixture}; the single scalar that
+        rewards both accuracy and well-calibrated spread.
+  \item \textbf{calibration error} --- the discrepancy between nominal and empirical
+        coverage of the predicted intervals (deviation of a reliability curve from
+        the diagonal).
+  \item \textbf{coverage at $p$} (e.g.\ cov@p90) --- the empirical fraction of
+        ground-truth points falling within the predicted $p$ central interval;
+        well calibrated when it matches the nominal $p$.
+  \item \textbf{$b$-scale} --- the mean predicted Laplace scale, a direct measure of
+        sharpness used to diagnose over-confidence (scale shrinkage).
+  \item \textbf{mode-weight entropy} ($\pi$-entropy) --- the entropy of
+        $\{\pi_k\}$, used to distinguish scale pathologies from collapse of the
+        mode weights.
+\end{itemize}
+
+\subsection{Models and Training Protocol}
+\label{ssec:setup_models}
+The capacity axis is HiVT's embedding width $d$ (Section~\ref{ssec:sota_hivt}),
+which sets the dimension of essentially every weight matrix and hence the whole
+parameter count. Four widths are studied, summarised in Table~\ref{tab:models}:
+$d\in\{128,64\}$ from the authors' released checkpoints serve as the large
+references (and $d{=}128$ as the distillation teacher), while $d\in\{32,16\}$ are
+trained in this work as the student candidates.
+
+\begin{table}[htbp]
+  \centering
+  \caption{HiVT configurations studied. Widths $128$ and $64$ use the authors'
+    released checkpoints; $32$ and $16$ are trained in this work. Parameter counts
+    are exact (architecture-determined).}
+  \label{tab:models}
+  \begin{tabular}{lrrr}
+    \toprule
+    Model       & Width $d$ & Parameters & vs.\ teacher \\
+    \midrule
+    HiVT-128 (teacher) & 128 & 2{,}559{,}993 & $100\%$ (1$\times$) \\
+    HiVT-64            & 64  & 653{,}369     & $25.5\%$ (4$\times$ smaller) \\
+    HiVT-32 (student)  & 32  & 170{,}073     & $6.6\%$ (15$\times$ smaller) \\
+    HiVT-16 (student)  & 16  & 45{,}929      & $1.8\%$ (55$\times$ smaller) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Attention heads.}
+HiVT uses $8$ attention heads at every width by default, so the per-head
+dimension $d/\text{heads}$ shrinks with width: $128/8{=}16$ at the teacher,
+$64/8{=}8$ at HiVT-64, and only $32/8{=}4$ at HiVT-32. HiVT-32 keeps the default
+$8$ heads (head dimension $4$), so the comparison against the teacher varies width
+alone; halving this to $2$ heads (head dimension $16$, matching the teacher's
+per-head width) was also examined and is discussed in
+Chapter~\ref{ch:results}. At $d{=}16$, however, the default $8$ heads give a head
+dimension of only $2$, which is too small for the attention to be expressive:
+training stalls at a degenerate optimum (minADE plateaus near $3.3$, against
+roughly $1$ for a working configuration). HiVT-16 therefore uses $2$ heads (head
+dimension $8$), and this is the configuration behind every reported HiVT-16
+result.
+
+\paragraph{Optimisation.}
+All models are trained with AdamW (Section~\ref{ssec:bg_optimizers}) under a
+cosine-annealing schedule (Section~\ref{ssec:bg_schedulers}) for $64$ epochs at
+batch size $128$. The learning rate is the main width-dependent hyperparameter:
+HiVT-32 trains best at $\eta=3\times10^{-3}$, whereas HiVT-16 underfits at that
+rate and uses $\eta=1\times10^{-3}$ (both selected by a learning-rate sweep
+reported in Chapter~\ref{ch:results}). Training is performed on a single NVIDIA
+RTX~5060; a full $64$-epoch run on the complete Argoverse~1 training split takes
+roughly $19$~hours for HiVT-32 (and less for the smaller HiVT-16).
+
+\subsection{Distillation Protocol}
+\label{ssec:setup_kd}
+The teacher is always HiVT-128, with its predictions cached offline
+(Section~\ref{ssec:impl_cache}). For each student width a \emph{from-scratch}
+baseline ($\lambda=0$, no distillation) is trained under an identical recipe, so
+that the effect of distillation is measured by an A/B comparison in which only the
+distillation term changes. Both distillation variants
+(Section~\ref{ssec:method_v1},~\ref{ssec:method_v2}) are evaluated, with the
+distribution-matching loss using $S=8$ Monte-Carlo samples per teacher mode, and
+the weight $\lambda$ swept per variant and width (recalling that $\lambda$ is not
+comparable across variants). To contain compute, hyperparameters are first ranked
+on a $25\%$-data, short-schedule \emph{proxy} and the selected configuration is
+then confirmed on the full dataset at the full $64$-epoch schedule; both the proxy
+and the confirmation are reported in Chapter~\ref{ch:results}.

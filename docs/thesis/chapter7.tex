@@ -1,0 +1,100 @@
+% !TEX root = ../main.tex
+% ============================================================================
+% Conclusion & Future Work
+% ============================================================================
+\chapter{Conclusion and Future Work}
+\label{ch:conclusion}
+
+\section{Summary}
+\label{sec:concl_summary}
+This thesis asked whether knowledge distillation can make a small HiVT trajectory
+predictor competitive with a much larger one without paying a calibration cost. The
+answer is yes, but only with the right objective. The contribution is a
+\emph{permutation-invariant, distribution-matching} distillation loss for
+Laplace-mixture predictors, together with the analysis and experiments that explain
+why the obvious alternatives fail.
+
+% TODO: tighten into 1-2 paragraphs once the surrounding chapters are final.
+
+\section{Contributions}
+\label{sec:concl_contrib}
+The main contributions, by chapter, are:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{A diagnosis of why index-aligned distillation is ill-posed for
+        mixture predictors} (Chapter~\ref{ch:method}). The winner-takes-all
+        training of HiVT leaves its mode \emph{slots} unconstrained, so a teacher
+        and an independently trained student number their modes under a consistent
+        but non-identity permutation. Pairing modes by index is optimal in $0\%$ of
+        scenes and mismatches modes by $\approx 4\times$ the optimal-assignment
+        distance (Figure~\ref{fig:perm}).
+  \item \textbf{A permutation-invariant distillation objective} that scores the
+        teacher's modes under the student's full mixture density, requiring no mode
+        correspondence and remaining well-defined when teacher and student differ in
+        mode count (Section~\ref{ssec:method_pi}).
+  \item \textbf{An analysis of the calibration failure of mean-target
+        distillation} (v1) and its fix (v2). Discarding the teacher's scales rewards
+        unbounded scale shrinkage; restoring them through a distribution-matching
+        (Monte-Carlo) target removes the pathology, and v1 is recovered exactly as
+        the zero-variance limit of v2 (Sections~\ref{ssec:method_calib},
+        \ref{ssec:method_v2}).
+  \item \textbf{Empirical confirmation at two student widths} (Chapter~\ref{ch:results}).
+        On HiVT-32, v2 matches v1's geometric gain (minFDE $-9.2\%$) while repairing
+        calibration to \emph{better than the teacher}; on HiVT-16 the gain is larger
+        still (minFDE $-22.7\%$) with calibration also improving. Distillation buys
+        roughly a full size-class of accuracy at zero inference cost, and the smaller
+        the student the larger the relative benefit.
+  \item \textbf{An efficiency characterisation} clarifying that the unconditional
+        dividend of a smaller model is \emph{memory} (up to $6.3\times$ less GPU
+        memory), while the latency win is real only on CPU under modest batching
+        (Section~\ref{sec:res_eff}).
+\end{itemize}
+
+\section{Limitations}
+\label{sec:concl_limits}
+Several limitations bound the claims of this work and motivate the directions below.
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Single dataset and backbone.} All results are on Argoverse~1 with
+        the HiVT architecture; generality to other datasets (Argoverse~2,
+        nuScenes, Waymo) and other mixture-based predictors is untested.
+  \item \textbf{Single-seed runs.} The headline A/B comparisons are single training
+        runs. Most effects are far larger than plausible run-to-run noise, but the
+        smaller calibration differences would be firmer with multiple seeds (a
+        second HiVT-16 seed is available but not yet evaluated).
+  \item \textbf{Proxy-based hyperparameter selection.} The $\lambda$ and recipe
+        choices are ranked on a $25\%$-data, short-schedule proxy. The proxy ranked
+        correctly and even \emph{under}-stated the full-data gain here, but it is
+        not guaranteed to transfer in general.
+  \item \textbf{One teacher.} Only HiVT-128 is used as the teacher; the effect of
+        teacher capacity, or of multi-teacher / self-distillation, is not studied.
+\end{itemize}
+
+\section{Future Work}
+\label{sec:concl_future}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Multi-seed variance.} Evaluate the existing second-seed HiVT-16 run
+        and add seeds for the HiVT-32 A/Bs, reporting mean$\pm$spread to harden the
+        calibration claims (Section~\ref{ssec:res_v2}).
+  \item \textbf{Other backbones and datasets.} Apply the permutation-invariant v2
+        loss to other mixture predictors and to Argoverse~2 / nuScenes, testing
+        whether the ``calibration-preserving, larger-gain-for-smaller-students''
+        pattern is architecture- and dataset-independent.
+  \item \textbf{Teacher capacity and ensembles.} Vary the teacher width and try
+        ensemble or multi-teacher distillation, where the soft-target set of
+        Section~\ref{ssec:method_pi} extends naturally to a union of mixtures.
+  \item \textbf{A scale-aware $\lambda$ schedule.} Because $\lambda$ is not
+        comparable across v1 and v2, and the v2 optimum drifts with student width
+        ($0.5$ at HiVT-32, $1.0$ at HiVT-16), an automatic balancing of the task and
+        distillation terms (e.g.\ gradient-norm or uncertainty weighting) would
+        remove a manual sweep.
+  \item \textbf{Closed-loop / downstream evaluation.} The motivation for calibrated
+        uncertainty is a downstream planner; evaluating the distilled student inside
+        a planning or closed-loop simulation would test whether the calibration
+        gains translate into better decisions, not just better likelihoods.
+  \item \textbf{On-device deployment.} Given that the dividend is memory and that
+        CPU is fastest at batch size~$1$, an INT8/quantised, CPU-targeted deployment
+        of the distilled student is a natural next step
+        (Section~\ref{sec:res_eff}).
+\end{itemize}

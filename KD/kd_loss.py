@@ -109,6 +109,7 @@ class HiVTKDLoss(nn.Module):
         scale_s  : [K, B, H, D]
         log_pi_s : [B, K]         student log mixture weights
         returns  : [F, B]         log p_student(target_f)  for each f, b
+        K=student modes, F=teacher modes, B=batch, H=horizon(time), D=coords
         """
         b_s = scale_s.clamp_min(self.min_scale)        # [K,B,H,D]
 
@@ -116,11 +117,25 @@ class HiVTKDLoss(nn.Module):
         bb = b_s.unsqueeze(1)                           # [K,1,B,H,D]
         tg = targets.unsqueeze(0)                       # [1,F,B,H,D]
 
+        # broadcasting mu and tg
+        # axis:      0    1    2    3    4
+        # mu :     [ K ,  1 ,  B ,  H ,  D ]
+        # tg :     [ 1 ,  F ,  B ,  H ,  D ]
+        #         ─────────────────────────
+        # result:  [ K ,  F ,  B ,  H ,  D ]
+
         # Per-element Laplace log-density, then sum over horizon + coords.
+        # log Lap(target | μ_k, b_k), per element
+        #Lap(traj | mode k) = product over all timesteps t and coords d of:
+                        # (1 / (2 * b[k,t,d])) * exp( -|y[t,d] - μ[k,t,d]| / b[k,t,d] )
+        # P(whole trajectory | mode k) = P(x1)*P(y1)*P(x2)*P(y2)* ... = product of all the bumps
+
         log_dens = -torch.log(2.0 * bb) - (tg - mu).abs() / bb   # [K,F,B,H,D]
+        ## Σ over H steps & D coords → log p(target|mode k)
         log_dens = log_dens.sum(dim=(-1, -2))                    # [K,F,B]
 
         # Add student log mixture weights:  [B,K] -> [K,1,B]
+        # log p_student(traj) = log( sum over k of  exp( log π[k] + log Lap(traj | mode k) ) )
         log_w = log_pi_s.permute(1, 0).unsqueeze(1)              # [K,1,B]
         log_joint = log_w + log_dens                            # [K,F,B]
 
