@@ -8,11 +8,11 @@
 Chapter~\ref{ch:method} defined the distillation objective mathematically. This
 chapter describes how that objective is realised as a working training pipeline
 (Section~\ref{sec:impl}) and the experimental protocol under which it is evaluated
-(Section~\ref{sec:setup}). The implementation detail matters more than usual here:
-distillation can fail \emph{silently}---a mis-scaled, mis-aligned, or
-numerically-unstable signal still produces a plausible-looking loss curve---so a
-substantial part of the engineering is the machinery that guarantees the intended
-signal, and only that signal, reaches the student.
+(Section~\ref{sec:setup}). The implementation detail if of high importance 
+because the distillation signal is subtle and easily corrupted: a mis-scaled,
+mis-aligned, or numerically-unstable signal still produces a plausible-looking loss curve. 
+So it is substantial to guarantee that only the intended
+signal reaches the student.
 
 \section{Implementation}
 \label{sec:impl}
@@ -36,7 +36,7 @@ The teacher (HiVT-128) is run once over the full training split and its predicti
 are written to a single HDF5 store. For each scene, indexed by its sequence id, the
 cache holds the focal agent's mixture parameters: the per-mode Laplace locations
 ($\loc^T_f$, shape $[F,H,2]$), the per-mode scales ($\scale^T_f$, $[F,H,2]$), and
-the raw mode logits ($\pi^T_f$, $[F]$). Storing the parameters---rather than
+the raw mode logits ($z^T_f$, $[F]$). Storing the parameters---rather than
 re-running the teacher each step---makes the per-epoch teacher cost effectively
 zero and decouples student training speed from teacher size, which is what allows
 the $55\times$-smaller student to be trained at full speed against a large teacher.
@@ -51,6 +51,87 @@ distilling against the wrong agent entirely. The cache is therefore written by
 explicitly selecting the focal agent's node, in its rotated-local reference frame,
 and the loss-formation step (Section~\ref{ssec:impl_loss}) re-asserts the
 alignment. This is the practical face of the silent-failure problem flagged above.
+
+Algorithm~\ref{alg:cache} states the caching pass; line~\ref{algline:focal} is the
+focal-agent selection whose mis-implementation is the hazard just described.
+Table~\ref{tab:cache_schema} documents the resulting on-disk layout. Two further
+choices are worth noting. The cache stores the \emph{raw mode logits} $z^T_f$ rather
+than the softmax weights $\pi^T_f$, deferring the normalisation 
+\begin{equation}
+  \pi^T_{f,k} = \frac{\exp(z^T_{f,k}/\tau)}{\sum_{j=1}^{F}\exp(z^T_{f,j}/\tau)}
+  \label{eq:softmax-temp}
+\end{equation}
+to load time so the
+same store can be read at any softmax temperature~$\tau$ (this work uses
+$\tau{=}1$) and without committing a particular numerical form. And each write is guarded by 
+a resume-safe existence
+check (line~\ref{algline:resume}), so an interrupted pass---over a
+$2\,{\times}\,10^5$-scene split this is a multi-hour job---resumes without
+recomputing. The pass also emits two sidecar files: a \texttt{.manifest.json}
+provenance record (teacher checkpoint, data root, split, local radius) and a
+\texttt{.sanity\_stats.json} health summary (NaN, collapsed-scale, and
+$\pi$-entropy checks), so a defective cache is caught before any student trains
+against it.
+
+\begin{algorithm}[htbp]
+\caption{Offline teacher caching (run once over the training split)}
+\label{alg:cache}
+\begin{algorithmic}[1]
+\Require frozen teacher $T$; training split $\mathcal{D}$; local radius $\rho$
+  (matched to the student); output store $\mathcal{H}$
+\For{each batch $b \in \mathcal{D}$}
+  \State $(\mathrm{pred},\, z^T) \gets T(b)$
+         \Comment{$\mathrm{pred}{:}\,[F,N,H,4]$ over all $N$ actors;\; $z^T{:}\,[N,F]$ logits}
+  \State $\loc \gets \mathrm{pred}[\dots,{:}2]$;\quad
+         $\scale \gets \mathrm{pred}[\dots,2{:}]$
+         \Comment{$[F,N,H,2]$ each}
+  \For{each scene $i$ in batch $b$}
+    \State $\mathrm{sid} \gets \textsc{Normalize}(b.\mathrm{seq\_id}[i])$
+    \If{$\mathrm{sid} \in \mathcal{H}$} \textbf{continue} \label{algline:resume}
+         \Comment{resume-safe skip} \EndIf
+    \State $n \gets b.\mathrm{agent\_index}[i]$ \label{algline:focal}
+         \Comment{focal node in batched node space (PyG-offset)}
+    \State $\mathcal{H}[\mathrm{sid}] \gets
+            \big(\loc[:,n],\; \scale[:,n],\; z^T[n]\big)$
+         \Comment{$[F,H,2],[F,H,2],[F]$, rotated-local frame}
+  \EndFor
+\EndFor
+\State write \texttt{.manifest.json} (provenance) and \texttt{.sanity\_stats.json}
+       (NaN / collapsed-scale / $\pi$-entropy checks)
+\end{algorithmic}
+\end{algorithm}
+
+\begin{table}[htbp]
+  \centering
+  \caption[Teacher-cache layout.]{Per-scene contents of the teacher cache: one HDF5
+    group per sequence id, three datasets, gzip-compressed. $F{=}6$ modes,
+    $H{=}30$ steps, $2$ coordinates. Storing logits (not softmax weights) defers
+    normalisation to load time.}
+  \label{tab:cache_schema}
+  \begin{tabular}{lllp{5.4cm}}
+    \toprule
+    Dataset & Shape & Dtype & Contents \\
+    \midrule
+    \texttt{loc}   & $[6,30,2]$ & float32 & per-mode Laplace means $\loc^T_f$ (focal agent, rotated-local frame) \\
+    \texttt{scale} & $[6,30,2]$ & float32 & per-mode Laplace scales $\scale^T_f$ ($>0$) \\
+    \texttt{pi}    & $[6]$      & float32 & raw mode logits $z^T_f$ (pre-softmax) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Practical considerations.}
+Two operational details proved to matter in practice. First, the cache was
+initially written as one \texttt{.pt} file per scene; the resulting collection
+of small files was wasteful both in disk footprint and in load overhead, and
+consolidating it into a single HDF5 store reduced the on-disk size and replaced
+thousands of small reads with indexed access into one handle. Second, the
+offline-caching design trades teacher \emph{compute} for memory and I/O
+pressure at load time: on a RAM-limited machine the operating system began
+paging the working set to a mechanical disk, which collapsed training
+throughput and, in one configuration, crashed the pipeline. Directing the
+swap/page file to the SSD resolved this. The lesson is that the cost saved by
+not re-running the teacher reappears as a storage-bandwidth requirement, so the
+cache and any paging it induces should live on fast storage.
 
 \subsection{The distillation loss module}
 \label{ssec:impl_loss}
@@ -80,12 +161,146 @@ from a student mode---which would otherwise produce \texttt{NaN} gradients.
 
 \paragraph{Monte-Carlo sampling for v2.}
 The mean-target loss (v1) scores the teacher locations $\loc^T_f$ directly under
-$p_S$. The distribution-matching loss (v2) instead draws $S{=}8$ samples per teacher
-mode from $\Lap(\loc^T_f,\scale^T_f)$ using reparameterised inverse-CDF Laplace
-sampling, evaluates $\log p_S$ at each, and averages---the Monte-Carlo estimate of
-the expectation in Eq.~\ref{eq:v2}. Each teacher mode's contribution is weighted by
-its softmax confidence $\pi^T_f$, realising the confidence-weighted soft-target set
-of Section~\ref{ssec:method_pi}.
+$p_S$, probing the student at a single point per mode. The distribution-matching
+loss (v2) must instead evaluate the expectation
+$\mathbb{E}_{\mathbf{y}\sim\Lap(\loc^T_f,\scale^T_f)}[\log p_S(\mathbf{y})]$ of
+Eq.~\ref{eq:v2}: the student's score $\log p_S$ averaged over \emph{everywhere} the
+teacher mode believes the agent may go, weighted by how strongly it believes each
+point. This average over a continuum of trajectories is an integral, and it is what
+makes v2 reward a student that matches the teacher's whole spread rather than only
+its centre. The integral has \emph{no closed form}, however: $p_S$ is itself a
+log-sum-exp of Laplace densities, so a Laplace density times the log of a sum of
+Laplaces cannot be integrated analytically. It is therefore estimated by Monte
+Carlo, which replaces the integral by an average of its \emph{integrand}---the
+quantity inside the integral, here the student score $\log p_S$---evaluated at
+$S{=}8$ samples drawn from the teacher mode,
+\begin{equation}
+  \label{eq:mc}
+  \mathbb{E}_{\mathbf{y}\sim\Lap(\loc^T_f,\scale^T_f)}[\log p_S(\mathbf{y})]
+    \;\approx\; \frac{1}{S}\sum_{s=1}^{S}\log p_S\!\left(\mathbf{y}^{(s)}\right),
+  \qquad
+  \mathbf{y}^{(s)}\sim\Lap(\loc^T_f,\scale^T_f).
+\end{equation}
+A subtlety distinguishes this from merely relocating the target, and it is the
+reason v2 behaves differently from v1 at all. Averaging the \emph{samples}
+$\mathbf{y}^{(s)}$ would simply recover the mean $\loc^T_f$---they are drawn
+symmetrically about it---collapsing v2 back to v1. What Eq.~\eqref{eq:mc} averages
+is instead the \emph{integrand} $\log p_S(\mathbf{y}^{(s)})$, the student's score
+\emph{at} each sample. Because $\log p_S$ is nonlinear (a log-sum-exp), the mean of
+the scores is not the score of the mean,
+\[
+  \tfrac1S\textstyle\sum_s \log p_S\!\left(\mathbf{y}^{(s)}\right)
+  \;\neq\; \log p_S\!\left(\loc^T_f\right),
+\]
+and the gap between the two carries exactly the information about the teacher's
+spread $\scale^T_f$ that v1 throws away. Concretely, when a teacher mode is
+uncertain (large $\scale^T_f$) its samples are thrown wide, so a student that has
+collapsed its density onto a narrow spike scores highly only near $\loc^T_f$ and
+poorly on the outlying samples, dragging the average down; only a student whose
+density covers the teacher's spread keeps every sample's score high. The estimator
+thus penalises precisely the over-confident scale shrinkage that v1 cannot detect,
+and in the zero-spread limit $\scale^T_f\!\to\!0$ every sample coincides with
+$\loc^T_f$ and v2 reduces exactly to v1.
+
+Samples are drawn by the inverse-CDF (reparameterised) method rather than a
+black-box sampler: drawing $u\sim\mathcal{U}(-\tfrac12,\tfrac12)$ independently per
+element and applying the inverse Laplace CDF gives an exact draw,
+\begin{equation}
+  \label{eq:invcdf}
+  \mathbf{y}^{(s)} \;=\; \loc^T_f \,-\, \scale^T_f \odot
+    \operatorname{sgn}(u)\odot\log\!\big(1-2\lvert u\rvert\big).
+\end{equation}
+Inverse-transform sampling is what makes this an \emph{exact} Laplace draw. A
+distribution's CDF maps a value to the probability mass below it; feeding a uniform
+$u$ \emph{backwards} through the inverse CDF returns the value at that percentile,
+and because $u$ is uniform over percentiles the returned values follow the target
+distribution---percentiles near the median, which lie geometrically close to
+$\loc^T_f$, are requested often and the tails rarely, reproducing the Laplace shape
+with no rejection step. The Laplace is one of the few distributions whose inverse
+CDF is closed-form, which collapses the whole procedure into the single expression
+above: $u\!+\!\tfrac12$ is the requested percentile, $\operatorname{sgn}(u)$ selects
+the side of the mode, $\log(1-2\lvert u\rvert)$ sets the distance out (near $0$ at
+the median, diverging towards the tails), and $\scale^T_f$ scales that distance so
+the teacher's own uncertainty governs how far the samples spread. The percentiles
+are not a fixed grid but eight independent random draws per mode, re-rolled each
+step---the ``Monte-Carlo'' in the name---so the estimate fluctuates from step to
+step with the variance noted below.
+
+Writing the sample as a deterministic, differentiable transform of the parameters
+and an external noise source $u$ is the reparameterisation trick. It is worth being
+precise about \emph{why} it matters here, because the usual motivation does not
+apply directly: the expectation is taken over the \emph{teacher} distribution, which
+is frozen and cached, while the student parameters enter only through the integrand
+$\log p_S$. The student gradient $\nabla_S\frac1S\sum_s\log p_S(\mathbf{y}^{(s)})$ is
+therefore exact for any fixed samples, therefore no score-function correction through the
+sampling distribution is needed, so inverse-CDF sampling is used because it is
+exact, cheap, and fully vectorised, and because the reparameterised form keeps the
+estimator differentiable should the same code ever be reused with an unfrozen or
+learned teacher. The estimator~\eqref{eq:mc} is unbiased and its variance falls as
+$1/S$; $S{=}8$ gives a stable gradient at an inner cost of $O(S K_S H)$ per teacher
+mode. Each mode's contribution is then weighted by its softmax confidence $\pi^T_f$,
+realising the confidence-weighted soft-target set of
+Section~\ref{ssec:method_pi}.
+
+In code this is implemented batched rather than as the per-mode loop of
+Algorithm~\ref{alg:v2}: the teacher samples are flattened across the
+sample and mode axes into a single batch of $S\,K_T$ soft targets, scored in one
+call to the \emph{same} mixture-density routine that v1 uses, and only then
+reshaped and averaged back over the $S$ samples. Figure~\ref{fig:v2_pipeline}
+traces this dataflow end to end with the tensor shape at each stage; it makes
+explicit that v2 is v1 wrapped in a sample--flatten--average envelope, and that the
+two variants share the single scoring kernel highlighted in the figure.
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+      node distance=9mm and 0mm,
+      box/.style={draw, rounded corners, align=center, inner sep=5pt,
+                  minimum width=46mm, font=\small},
+      kernel/.style={box, draw=black, fill=black!6, very thick},
+      slbl/.style={font=\footnotesize, align=left, anchor=west},
+      note/.style={font=\footnotesize\itshape, align=left, anchor=west},
+      arr/.style={-{Stealth[length=2.4mm]}, thick},
+    ]
+    \node[box] (teacher)
+      {teacher modes $\loc^T,\scale^T$\\[2pt]\texttt{[F,\,B,\,H,\,D]}};
+    \node[box, below=of teacher] (samp)
+      {samples $\mathbf{y}\sim\Lap(\loc^T,\scale^T)$\\[2pt]\texttt{[S,\,F,\,B,\,H,\,D]}};
+    \node[box, below=of samp] (flat)
+      {flattened soft targets\\[2pt]\texttt{[S*F,\,B,\,H,\,D]}};
+    \node[kernel, below=of flat] (score)
+      {$\log p_S(\cdot)$ \;(v1 mixture scorer)\\[2pt]\texttt{[S*F,\,B]}};
+    \node[box, below=of score] (avg)
+      {$\overline{\log p_S}$ over $S$\\[2pt]\texttt{[F,\,B]}};
+    \node[box, below=of avg] (out)
+      {$\mathcal{L}_{\mathrm{v2}}$\;\;(scalar)};
+
+    \draw[arr] (teacher) -- node[slbl, midway, xshift=4mm]
+      {(1) draw $S$ samples per\\[-1pt]\hphantom{(1) }mode (Eq.~\ref{eq:invcdf})} (samp);
+    \draw[arr] (samp) -- node[slbl, midway, xshift=4mm]
+      {(2) flatten sample$\times$mode} (flat);
+    \draw[arr] (flat) -- node[slbl, midway, xshift=4mm]
+      {(3) score under student\\[-1pt]\hphantom{(3) }mixture $p_S$} (score);
+    \draw[arr] (score) -- node[slbl, midway, xshift=4mm]
+      {(4) average over the $S$\\[-1pt]\hphantom{(4) }samples (Eq.~\ref{eq:mc})} (avg);
+    \draw[arr] (avg) -- node[slbl, midway, xshift=4mm]
+      {(5) $\times\,\pi^T_f$, sum over $F$,\\[-1pt]\hphantom{(5) }$\div 2H$, mean over $B$, $\times\,\lambda$} (out);
+
+    \node[note, right=18mm of avg]
+      {identical shape and\\scorer as v1 from here};
+  \end{tikzpicture}
+  \caption[Batched dataflow of the v2 distillation loss.]{Batched tensor flow of
+    the distribution-matching loss $\mathcal{L}_{\mathrm{v2}}$, with the shape at
+    each stage. $F$ teacher modes, $B$ focal agents in the batch, $H{=}30$ horizon
+    steps, $D{=}2$ coordinates, $S{=}8$ Monte-Carlo samples. The shaded box is the
+    student mixture scorer $\log p_S$, the \emph{same} kernel evaluated by v1
+    (Algorithm~\ref{alg:v1}); v2 only adds the sample (1) and flatten (2) before it
+    and the average (4) after it. From stage (4) onward the computation is identical
+    in shape and code to v1, which scores the teacher means directly. Step (5)
+    folds in the teacher confidences and the per-element normalisation of
+    Algorithm~\ref{alg:v2}.}
+  \label{fig:v2_pipeline}
+\end{figure}
 
 \subsection{Evaluation and silent-failure diagnostics}
 \label{ssec:impl_diag}
@@ -145,8 +360,11 @@ whether the full mixture is honest, which matters because a downstream planner
 consumes the distribution, not just the best mode.
 \begin{itemize}[leftmargin=1.4em]
   \item \textbf{mixNLL} --- the negative log-likelihood of the ground truth under
-        the full predicted mixture~\eqref{eq:mixture}; the single scalar that
-        rewards both accuracy and well-calibrated spread.
+        the full predicted mixture~\eqref{eq:mixture}, defined in~\eqref{eq:mixnll};
+        the single scalar that rewards both accuracy and well-calibrated spread, and
+        the calibration metric logged by the training monitor. It must not be
+        confused with the best-mode regression NLL of~\eqref{eq:reg}, which scores
+        only the winning mode.
   \item \textbf{calibration error} --- the discrepancy between nominal and empirical
         coverage of the predicted intervals (deviation of a reliability curve from
         the diagonal).
@@ -159,6 +377,41 @@ consumes the distribution, not just the best mode.
         $\{\pi_k\}$, used to distinguish scale pathologies from collapse of the
         mode weights.
 \end{itemize}
+
+Table~\ref{tab:metrics} collects every metric used in this work with its formula and
+its direction of improvement, and serves as the reference index for the symbols that
+recur throughout Chapter~\ref{ch:results}.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Index of evaluation metrics. $K{=}6$ modes over $H$ prediction steps;
+    $\mathbf{y}^\star$ is the ground-truth future,
+    $k^\star=\argmin_k\sum_t\lVert\loc_{k,t}-\mathbf{y}^\star_t\rVert_2$ the best mode
+    and $\pi_{k^\star}$ its weight. Geometric metrics use the single best mode;
+    calibration metrics use the full mixture~\eqref{eq:mixture}. ``Better'' gives the
+    desired direction ($\downarrow$ lower, $\to p$ should match the nominal level,
+    ``diag.'' a diagnostic read alongside the others).}
+  \label{tab:metrics}
+  \small
+  \begin{tabular}{llp{6.6cm}c}
+    \toprule
+    Metric & Symbol & Definition & Better \\
+    \midrule
+    \multicolumn{4}{l}{\emph{Geometric (best-of-$K$) accuracy}} \\
+    minADE$_K$    & --- & $\frac{1}{H}\sum_{t=1}^{H}\lVert\loc_{k^\star,t}-\mathbf{y}^\star_t\rVert_2$, mean displacement of the best mode & $\downarrow$ \\
+    minFDE$_K$    & --- & $\lVert\loc_{k^\star,H}-\mathbf{y}^\star_H\rVert_2$, final-step error of the best mode (primary geometric metric) & $\downarrow$ \\
+    MR            & --- & fraction of scenes with $\text{minFDE}>2\,\mathrm{m}$ & $\downarrow$ \\
+    brier-minFDE  & --- & $\text{minFDE}+(1-\pi_{k^\star})^2$, the official Argoverse ranking metric & $\downarrow$ \\
+    \addlinespace
+    \multicolumn{4}{l}{\emph{Calibration (full-distribution) quality}} \\
+    mixNLL        & $\mathcal{L}_{\mathrm{mix}}$ & $-\log\sum_{k}\pi_k\,\Lap(\mathbf{y}^\star\mid\loc_k,\scale_k)$, Eq.~\eqref{eq:mixnll} & $\downarrow$ \\
+    calib.\ error & --- & deviation of the reliability curve from the diagonal (nominal vs.\ empirical coverage) & $\downarrow$ \\
+    cov@$p$       & --- & empirical fraction of $\mathbf{y}^\star$ inside the predicted $p$ central interval & $\to p$ \\
+    $b$-scale     & $\bar{b}$ & mean predicted Laplace scale (sharpness; small $\Rightarrow$ over-confident) & diag. \\
+    $\pi$-entropy & --- & $-\sum_{k}\pi_k\log\pi_k$, entropy of the mode weights & diag. \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 \subsection{Models and Training Protocol}
 \label{ssec:setup_models}

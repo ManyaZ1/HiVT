@@ -5,21 +5,31 @@
 \chapter{Methodology}
 \label{ch:method}
 
-This chapter develops the distillation method. It first makes precise why a naive,
-index-aligned distillation of HiVT's mixture output is ill-posed
-(Section~\ref{ssec:method_perm}), then derives a permutation-invariant objective
-(Section~\ref{ssec:method_pi}) and its two variants---the mean-target loss
-(Section~\ref{ssec:method_v1}) and the distribution-matching loss
-(Section~\ref{ssec:method_v2})---together with the analysis that explains why the
-former breaks calibration and the latter does not. The implementation that makes
-this signal reach the student reliably, and the experimental setup used to evaluate
-it, are deferred to Chapter~\ref{ch:impl}.
+This chapter develops the methodology of this thesis. As
+it was established, inspired by the compute asymmetry problem and the widespread
+use of knowledge distillation in this domain, the thesis proposes a knowledge distillation
+method for mixture-based trajectory predictors. The model used in this thesis
+is HiVT: Hierarchical Vector Transformer for Multi-Agent Motion Prediction~\cite{hivt}, 
+selected for its high performance and its ability to be trained
+on a single GPU. In this chapter, the methodology is presented in detail
+(Section~\ref{sec:method}): it firstly explores why a naive, index-aligned
+distillation of HiVT's mixture output would fail, then derives a
+permutation-invariant objective and its two variants, and finally describes the
+implementation that makes the distillation signal reach the student reliably. The
+experimental setup used to evaluate the method---dataset, metrics, and training
+protocol---is deferred to Chapter~\ref{ch:impl}.
 
-\section{Preliminaries: HiVT's Mixture Output and Training Loss}
+\section{Method}
+\label{sec:method}
+
+\subsection{HiVT's Mixture Output and Training Loss}
 \label{ssec:method_prelim}
-Recall from Section~\ref{ssec:sota_hivt} that, for the focal agent of a scene,
-HiVT predicts a mixture of $K$ trajectory modes. Writing $\mathbf{y}\in\R^{2H}$
-for a future trajectory over the $H$ prediction steps, the predicted distribution
+As established in Section~\ref{ssec:sota_hivt}, for every agent, HiVT outputs 
+a mixture of $K$=6 candidate trajectories {$\mu_k$} with per-step scales 
+{$\scale_k$} and probability weights {$\pi_k$}. 
+We can interpret this output as a predictive distribution over the future, where 
+each trajectory is written as $\mathbf{y}\in\R^{2H}$, 
+where $H$ is the number of prediction steps. The predicted distribution
 is a Laplace mixture
 \begin{equation}
   \label{eq:mixture}
@@ -35,7 +45,7 @@ of Section~\ref{ssec:bg_mdn}, with $\Lap(y\mid\mu,b)=\tfrac{1}{2b}\exp(-|y-\mu|/
 HiVT is trained with a regression term and a classification term. The regression
 term is the Laplace negative log-likelihood (Section~\ref{ssec:bg_mle}) of the
 ground-truth trajectory $\mathbf{y}^\star$ under the \emph{single best-matching}
-mode---a \emph{winner-takes-all} scheme that, on each example, selects the mode
+mode. This defines a \emph{winner-takes-all} loss that, on each example, selects the mode
 $k^\star$ closest to the ground truth and updates only its location and scale:
 \begin{equation}
   \label{eq:reg}
@@ -43,7 +53,7 @@ $k^\star$ closest to the ground truth and updates only its location and scale:
     = -\frac{1}{H}\sum_{t=1}^{H}
        \log \Lap\!\left(\mathbf{y}^\star_t \mid \loc_{k^\star,t},\scale_{k^\star,t}\right),
   \qquad
-  k^\star = \argmin_{k}\, \lVert \loc_k - \mathbf{y}^\star\rVert .
+  k^\star = \arg\min_k \sum_{t=1}^{H} \lVert \mu_{k,t} - y_t^\star \rVert_2
 \end{equation}
 A classification term then trains the mixing coefficients $\{\pi_k\}$ toward a
 \emph{soft} target rather than a hard label on the winner: each mode is assigned a
@@ -58,56 +68,162 @@ $k^\star$ the most favoured. The per-step NLL expands to
 \end{equation}
 a form we return to in Section~\ref{ssec:method_calib}.
 
-\section{The Mode-Permutation Problem}
+\subsection{The Mode-Permutation Problem}
 \label{ssec:method_perm}
 The winner-takes-all loss in~\eqref{eq:reg} supervises only one mode per example,
 chosen by proximity to the ground truth. It therefore never constrains \emph{which
 slot} a given behaviour occupies: across the dataset, mode index $3$ of one trained
 model might capture ``turn left'' while index $3$ of another captures ``go
-straight.'' The loss is, in this sense, \emph{symmetric under relabelling} of the
-$K$ modes---permuting the mode indices leaves it unchanged---so two independently
-trained HiVTs (such as a teacher and a student) settle on their own, mutually
-unaligned slot orderings.
+straight.'' The loss can be considered \emph{symmetric under relabelling} of the
+$K$ modes and  permuting the mode indices would leave it unchanged. Because of 
+this symmetry, nothing during training pins a behaviour to a particular slot: 
+the slot it occupies is fixed only by random initialisation and optimisation noise.  
+Therefore, two independently trained HiVTs have no mechanism to agree on a slot ordering.
+We verify this directly for the teacher HiVT-128 -- student HiVT-32 pair used in this work below (Fig.~\ref{fig:perm}).
 
-This is fatal for any distillation term that pairs student and teacher modes
-\emph{by index}. Such a term would, for most scenes, compare a student mode against
-the wrong teacher mode---``turn left'' supervised toward ``go straight''---and
-inject structured noise that the model cannot resolve. Figure~\ref{fig:perm}
-quantifies the misalignment on $500$ validation scenes: the per-scene optimal
-matching (computed by minimum-cost linear assignment) is the identity in $0\%$ of
-scenes, and pairing modes by index places them, on average, $3.98\times$ farther
-apart than the optimal matching. Notably the misalignment is not random noise but a
-\emph{consistent, non-identity permutation}---each student slot maps reliably to a
-fixed but \emph{different} teacher slot---reflecting that both models discover a
-similar repertoire of behaviours yet file them under unrelated indices. One might
-imagine recovering this single global permutation once and then distilling by
-index; we do not, because the correspondence is unknown a priori, drifts as the
-student trains, and is not perfectly one-to-one (the unconstrained
-nearest-neighbour assignment in fact falls \emph{below} chance, as several student
-modes collapse onto the same teacher mode). A correct distillation objective should
-instead be \emph{invariant to the ordering of both models' modes}, sidestepping any
-need to estimate a correspondence at all.
 
-\begin{figure}[htbp]
+The non determinism of the slots is fatal for any distillation term that pairs student 
+and teacher modes naively \emph{by index}. 
+Such a term would, for most scenes, compare a student mode against
+an unrelated teacher mode---``turn left'' supervised toward ``go straight''---and
+inject structured noise that the model cannot resolve. Empirically, the optimal
+matching between a teacher's and a student's modes is far from the identity: the
+permutation that best aligns them (computed per scene by linear assignment) almost
+never maps slot $k$ to slot $k$, as the assignment matrix in
+Figure~\ref{fig:perm} shows. Any correct distillation objective must therefore be
+\emph{invariant to the ordering of both models' modes}.
+
+One might hope to sidestep the slot non-determinism by replacing index pairing with
+a \emph{similarity} pairing---matching each teacher mode to its closest student mode
+(e.g.\ by linear assignment) and supervising the matched pairs. This is a strict
+improvement over index pairing, but it carries its own costs: the hard assignment is
+non-differentiable and can flip discontinuously during training, and a one-to-one 
+matching is only defined when the two models carry the 
+\emph{same} number of modes. When $K_T \neq K_S$, a matching that strictly compares
+slots necessarily
+leaves modes unmatched or double-counted, so the teacher's mode count is silently
+forced onto the student. A set-to-mixture cross-entropy avoids this entirely: it is
+defined for any $K_S$ and $K_T$ (Proposition~\ref{prop:perm}), letting student and
+teacher differ freely in mode count. 
+
+\begin{figure}[h]
   \centering
-  \includegraphics[width=0.6\linewidth]{figures/mode_perm_optimal.png}
-  \caption{Optimal per-scene assignment between teacher (HiVT-128) and
-    independently trained student (HiVT-32) mode slots, over $500$ validation
-    scenes. Each cell counts how often student slot $k$ is matched to teacher slot
-    $f$ under the minimum-cost one-to-one assignment (endpoint distance). The mass
-    concentrates on a \emph{permuted}, non-identity diagonal: the two models learn
-    a similar set of behaviours but file them under different slot indices. The
-    identity permutation (slot $k\!\to\!$ slot $k$) is optimal in $0\%$ of scenes,
-    and pairing modes by index is on average $3.98\times$ farther apart than the
-    optimal matching ($5.16$\,m vs.\ $1.82$\,m mean endpoint distance). An
-    index-aligned distillation loss would therefore mismatch modes on essentially
-    every scene.}
+  \includegraphics[width=0.6\linewidth]{mode_perm_optimal.png}
+  \caption[Teacher--student mode assignment matrix.]{Best per-scene assignment between teacher and student mode slots. The
+    mass lies off the diagonal: the index that best matches teacher mode $k$ is
+    rarely student mode $k$, confirming that the two models number their modes in
+    unrelated orders. An index-aligned distillation loss would compare unrelated
+    trajectories on most scenes.}
   \label{fig:perm}
 \end{figure}
 
-\section{A Permutation-Invariant Mixture Objective}
+\subsection{The Design Space of Distillation Objectives}
+\label{ssec:method_design}
+The permutation argument of Section~\ref{ssec:method_perm} is a \emph{constraint},
+not yet a method: it rules out any objective that pairs modes by index, but several
+families of permutation-respecting objectives remain. Before deriving the one this
+thesis adopts, we lay out the design space and say why each alternative is rejected,
+so that the proposed loss is understood as a deliberate choice among known options
+rather than the only conceivable one. Four families are summarised in
+Table~\ref{tab:design}; we take them in turn.
+
+\paragraph{(i) Index-aligned soft-label KD.} The textbook approach---transfer the
+teacher's output by matching it to the student's element-wise, as in
+temperature-softmax distillation~\cite{hinton}---pairs student mode
+$k$ with teacher mode $k$ and regresses one onto the other. This is the
+implicit-identity matching that Section~\ref{ssec:method_perm} refutes: because the
+two models number their modes in unrelated orders (Figure~\ref{fig:perm}), it
+compares ``turn left'' against ``go straight'' on most scenes and injects
+structured noise. It is the natural baseline and the one the whole method is
+designed to avoid.
+
+\paragraph{(ii) Assignment-based matching (Hungarian / optimal transport).}
+Instead of trusting the index order, one can \emph{compute} a meaningful
+correspondence: for each scene, find the pairing of teacher modes to student modes
+that minimises a matching cost (typically the distance between their predicted
+locations), and then supervise only the matched pairs. This is a linear-assignment
+(Hungarian) or optimal-transport problem, and it is exactly how set-prediction
+models such as DETR align their predictions to the ground truth~\cite{carion2020detr}.
+It is the natural and rigorous fix to the index-pairing bug: by matching like with
+like, it stops comparing ``turn left'' against ``go straight'', and the result is
+\emph{permutation invariant}---relabelling the teacher's modes does not change the
+loss. For these reasons it is a genuine, strict improvement over family~(i).
+
+This method was not adopted in the end, because the hard assignment carries costs that
+the density objective of families~(iii) and~(iv) avoids.
+\begin{itemize}
+  \item \textbf{It is expensive.} Solving the assignment is an $O(K^3)$ operation
+    \emph{per scene}, repeated every training step.
+  \item \textbf{It makes the training signal discontinuous.} The matching is an
+    $\argmin$---a hard, discrete choice of \emph{which} pairing wins. This in itself
+    is not fatal: like DETR~\cite{carion2020detr}, one simply treats the chosen
+    pairing as fixed and backpropagates through the matched pairs, which gives a
+    perfectly usable gradient. The real cost is that this choice is a step function
+    of the predictions. Because the assignment is winner-take-all, a tiny weight
+    update can make a \emph{different} pairing cheapest, and the whole correspondence
+    then snaps to a new configuration in a single step. A teacher mode that sits
+    almost equidistant between two student modes may be matched to one on this step
+    and to the other on the next, so the gradient the optimiser computes is suddenly
+    for a different objective than the one it was descending---the loss can even rise
+    across a step that should have improved it. The surface the gradient lives on is
+    thus locally smooth but stitched from pieces that swap discontinuously: jagged,
+    and a source of training noise. A density loss has no hard decision to flip, so
+    the supervision glides smoothly as the modes move.
+\end{itemize}
+A third limitation is decisive on its own: a hard one-to-one matching pairs each
+teacher mode with exactly one student mode, so it is only well defined when the two
+models carry the same number of modes ($K_T=K_S$). In a case where the counts would
+differ, for example a six-mode teacher distilling into a four-mode student,
+some modes would be left
+unmatched or reused, and the teacher's mode count is silently forced onto the student. 
+The density objective sidesteps every one of these costs (Section~\ref{ssec:method_pi}).
+The optimal assignment is computed only as a \emph{diagnostic}
+to visualise the permutation gap (Figure~\ref{fig:perm}), never as the training
+signal.
+
+\paragraph{(iii)--(iv) Density matching, and the direction of divergence.} The
+alternative this thesis adopts removes matching altogether: score the teacher's
+predictions under the student's \emph{full mixture density} $p_S$
+(Section~\ref{ssec:method_pi}). This is permutation invariant by construction
+(Proposition~\ref{prop:perm}), needs no assignment, is differentiable everywhere,
+and is defined for any $K_S,K_T$. Two design choices remain inside this family. The
+first is \emph{what} of each teacher mode to score: its mean (variant v1,
+Section~\ref{ssec:method_v1}) or samples carrying its spread (variant v2,
+Section~\ref{ssec:method_v2}). The second is the \emph{direction} of the
+Kullback--Leibler divergence between the two mixtures: the \emph{forward}
+$\mathrm{KL}(p_T\Vert p_S)$, which is \emph{mode-covering} (it forces the student to
+put mass on every manoeuvre the teacher finds plausible), versus the \emph{reverse}
+$\mathrm{KL}(p_S\Vert p_T)$, which is \emph{mode-seeking} (it lets the student lock
+onto a subset of the teacher's modes and ignore the rest). The proposed objective is the
+forward direction; Section~\ref{ssec:method_v2} shows v2 \emph{is} the (Monte-Carlo
+estimated) forward KL and argues that mode-covering is the safety-correct choice for
+trajectory prediction---a student must never drop a manoeuvre the teacher considers
+possible.
+
+\begin{table}[htbp]
+  \centering
+  \caption[Design space of mixture distillation objectives.]{The design space of
+    mixture-distillation objectives against the requirements set by
+    Section~\ref{ssec:method_perm}. Only the density-matching family (this work) is
+    permutation invariant, assignment-free, smooth, \emph{and} defined when
+    student and teacher carry different mode counts; v2 additionally transfers the
+    teacher's predictive spread. $K=\max(K_S,K_T)$.}
+  \label{tab:design}
+  \begin{tabular}{lccccc}
+    \toprule
+    Objective family & Perm.\ inv. & Matching-free & $K_S{\neq}K_T$ & Smooth & Transfers spread \\
+    \midrule
+    Index-aligned soft KD          & No  & Yes & Yes & Yes & --- \\
+    Hungarian / OT matching        & Yes & No  & No  & No  & partial \\
+    Density-match, mean (v1)       & Yes & Yes & Yes & Yes & No \\
+    \textbf{Density-match, samples (v2)} & Yes & Yes & Yes & Yes & Yes \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{A Permutation-Invariant Mixture Objective}
 \label{ssec:method_pi}
-The resolution is to stop matching modes altogether and instead score the
+The proposed solution is to stop matching modes by index and instead score the
 teacher's predictions under the student's \emph{full mixture density}. Let the
 student predict the mixture $p_S$ of~\eqref{eq:mixture} with $K_S$ modes
 $\{(\pi^S_k,\loc^S_k,\scale^S_k)\}$, and let the (frozen) teacher provide $K_T$
@@ -116,48 +232,180 @@ teacher's modes as a \emph{confidence-weighted set of soft targets} and evaluate
 each under $p_S$, weighting by the teacher's confidence $\pi^T_f$. This single
 design choice yields the invariance we need.
 
-\begin{prop}[Permutation invariance]
-\label{prop:perm}
-Any objective of the form
-$\mathcal{L} = -\sum_{f=1}^{K_T} \pi^T_f\, g\!\left(p_S, \loc^T_f, \scale^T_f\right)$,
-where $g$ depends on the student only through its mixture density $p_S$, is
-invariant to permutations of the student's mode indices and of the teacher's mode
-indices, and is well-defined when $K_S \neq K_T$.
-\end{prop}
-\begin{proof}
-The student enters only through $p_S(\cdot)=\sum_{k}\pi^S_k\Lap(\cdot\mid\loc^S_k,\scale^S_k)$,
-a sum over student modes; a finite sum is unchanged by reordering its terms, so
-$p_S$---and hence $\mathcal{L}$---is invariant to permutations of the student
-indices. The teacher enters only through the outer sum $\sum_f \pi^T_f(\cdot)$,
-likewise invariant to reordering of the teacher indices. Neither sum refers to a
-correspondence between the two index sets, so $\mathcal{L}$ requires no matching
-and is defined for any $K_S,K_T$. \qed
-\end{proof}
+We now derive this objective explicitly, building from a single coordinate up to
+its closed form. Each teacher mode is scored at its predicted trajectory (mean)
+$\loc^T_f$, with the teacher's spread $\scale^T_f$ set aside for now; this choice
+yields the first variant of the loss (v1), and revisiting \emph{what} is scored in
+its place gives the second (v2, Section~\ref{ssec:method_v2}). The derivation
+proceeds in four steps---one coordinate, one trajectory, the student mixture, and
+the teacher-weighted sum---each collapsing one axis of the computation.
 
-The two distillation losses below are both instances of this form; they differ
-only in the choice of $g$, i.e.\ in \emph{what} of each teacher mode is scored
-under $p_S$.
+\paragraph{Per-element density.} For one agent, a student mode $k$, and a teacher
+mode $f$. At prediction step $t$ and coordinate $d\in\{1,2\}$ the student's mode
+$k$ places a one-dimensional Laplace bump centred at $\loc^S_{k,t,d}$ with scale
+$\scale^S_{k,t,d}$. From the Laplace NLL~\eqref{eq:laplace_nll}, the log-density it
+assigns to the teacher's predicted coordinate $\loc^T_{f,t,d}$ is
+\begin{equation}
+  \label{eq:per_elem}
+  \log\Lap\!\left(\loc^T_{f,t,d}\mid \loc^S_{k,t,d},\scale^S_{k,t,d}\right)
+    = -\log\!\big(2\,\scale^S_{k,t,d}\big)
+      - \frac{\bigl\lvert \loc^T_{f,t,d}-\loc^S_{k,t,d}\bigr\rvert}{\scale^S_{k,t,d}}.
+\end{equation}
+This is largest when the student's prediction coincides with the teacher's at that
+step and coordinate, and decreases linearly with their separation, measured in
+units of the student's own scale.
 
-\section{v1: Mean-Target Distillation}
-\label{ssec:method_v1}
-The simplest choice scores each teacher mode's \emph{location}---the predicted
-trajectory $\loc^T_f$---as a point target under the student mixture:
+% add per_element_laplace_v1expl.png
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.9\linewidth]{per_element_laplace_v1expl.png}
+  \caption[Per-element Laplace density and its log.]{The per-element term of
+    Equation~\eqref{eq:per_elem}, shown as a density (left) and as a log-density
+    (right). \emph{Left:} student mode $k$ places a one-dimensional Laplace bump
+    centred at its prediction $\loc^S_{k,t,d}$ with scale $\scale^S_{k,t,d}$; the
+    teacher coordinate $\loc^T_{f,t,d}$ lies on the falling flank and the curve
+    height there is the density it is assigned. \emph{Right:} the same object after
+    taking the log is a straight-sided \emph{tent}, peaking at
+    $-\log(2\scale^S_{k,t,d})$ and descending with constant slope
+    $1/\scale^S_{k,t,d}$ on each side. The height of the tent at $\loc^T_{f,t,d}$ is
+    exactly the log-density of Equation~\eqref{eq:per_elem}: largest when student and
+    teacher coincide, and falling \emph{linearly} with their separation
+    $\lvert\loc^T_{f,t,d}-\loc^S_{k,t,d}\rvert$ measured in units of the student's own
+    scale. The peak height grows without bound as $\scale^S_{k,t,d}\!\to\!0$, with no
+    term here to oppose it---the shrinkage pathology made precise in
+    \S\ref{ssec:method_calib}.}
+  \label{fig:per_elem}
+\end{figure}
+
+\paragraph{From elements to a trajectory.} HiVT emits each mode as a
+\emph{factorised} Laplace ( a whole trajectory is built as a product of 
+independent 1-D Laplace densities), so the log-likelihood the student's mode $k$ assigns to
+the whole teacher trajectory $\loc^T_f$ is the sum of~\eqref{eq:per_elem} over the
+$H$ steps and the two coordinates,
+\begin{equation}
+  \label{eq:traj_score}
+  \ell_{k,f}
+    \;=\; \sum_{t=1}^{H}\sum_{d=1}^{2}
+          \log\Lap\!\left(\loc^T_{f,t,d}\mid \loc^S_{k,t,d},\scale^S_{k,t,d}\right),
+\end{equation}
+a sum of $2H$ per-element terms ($2\times30$ on Argoverse). Summing in log-space is
+equivalent to multiplying the densities, so $\ell_{k,f}$ is the log of the joint
+likelihood of the entire teacher path under student mode $k$. The factorisation
+in~\eqref{eq:traj_score} is precisely the \emph{conditional}-independence
+assumption already built into HiVT's mixture head~\eqref{eq:mixture}. It does
+\emph{not} assert that successive positions are physically independent---they are
+strongly correlated, since $x_{t+1}$ follows from $x_t$---but this correlation
+is carried by the mode itself (each $\loc^S_k$ is one coherent, fully correlated
+trajectory) and by the mixture over modes, rather than by an explicit covariance
+across steps. The distillation loss inherits the same factorisation under which the
+model is trained and evaluated. Evaluating $\ell_{k,f}$ over every pair yields a
+$K_S\times K_T$ array of trajectory-to-trajectory scores (here $6\times6=36$).
+
+\paragraph{From a mode to the mixture.} A teacher trajectory should be scored under
+the student's \emph{entire} predictive distribution, not a single component. We
+therefore add each student mode's log-weight $\log\pi^S_k$---discounting modes the
+student itself deems unlikely---and marginalise over $k$:
+\begin{equation}
+  \label{eq:mix_score}
+  \log p_S\!\left(\loc^T_f\right)
+    \;=\; \log\sum_{k=1}^{K_S}\exp\!\big(\log\pi^S_k + \ell_{k,f}\big)
+    \;=\; \log\sum_{k=1}^{K_S}\pi^S_k\,
+          \Lap\!\left(\loc^T_f\mid\loc^S_k,\scale^S_k\right).
+\end{equation}
+The inner sum is the mixture density~\eqref{eq:mixture} evaluated at the teacher
+point; in practice it is computed with a numerically stable log-sum-exp to avoid
+underflow when the target lands far from every student mode. Two properties of this
+step matter. First, the output is a \emph{single} scalar per teacher mode---the
+mixture log-likelihood of $\loc^T_f$---and \emph{not} a distribution over the
+student's $K_S$ modes; such a distribution would be the posterior responsibilities
+$\pi^S_k\Lap/\sum_j\pi^S_j\Lap$, which the objective never forms. Second, the
+log-sum-exp acts as a \emph{smooth maximum}: it is dominated by whichever student
+mode best explains $\loc^T_f$ yet stays differentiable in all of them. This is
+where the absence of pairing materialises---teacher mode $f$ is explained by
+whichever student mode(s) happen to lie near it, selected by their values rather
+than by a shared index.
+
+\paragraph{Assembling the objective.} Finally, each teacher mode is weighted by the
+teacher's own confidence $\pi^T_f$ and the contributions are summed, so that modes
+the teacher considers likely dominate the target and modes it nearly ignores
+contribute little. Substituting the mixture score~\eqref{eq:mix_score} into this
+confidence-weighted sum gives the mean-target distillation loss in closed form,
 \begin{equation}
   \label{eq:v1}
   \mathcal{L}_{\mathrm{v1}}
-    = -\sum_{f=1}^{K_T} \pi^T_f \, \log p_S\!\left(\loc^T_f\right)
-    = -\sum_{f=1}^{K_T} \pi^T_f \,
-        \log \sum_{k=1}^{K_S} \pi^S_k \,\Lap\!\left(\loc^T_f \mid \loc^S_k,\scale^S_k\right).
+    \;=\; -\sum_{f=1}^{K_T} \pi^T_f \, \log p_S\!\left(\loc^T_f\right)
+    \;=\; -\sum_{f=1}^{K_T} \pi^T_f \,
+        \log \sum_{k=1}^{K_S} \pi^S_k \,
+        \Lap\!\left(\loc^T_f \mid \loc^S_k,\scale^S_k\right).
 \end{equation}
-This transfers \emph{where} the teacher expects the agent to go (the mode means)
-and \emph{how likely} it considers each (the weights $\pi^T_f$), but it
-\emph{discards the teacher's scales} $\scale^T_f$: the target is a bare point, with
-no spread. By Proposition~\ref{prop:perm} it is permutation invariant. As shown
-next, this objective improves best-of-$K$ geometry---the student's mode locations
-are pulled toward the teacher's accurate ones---but systematically degrades
-calibration.
+The two nested sums are exactly the two collapses of the construction: the inner
+$\log\sum_k$ is the mixture score~\eqref{eq:mix_score} that marginalises the
+student's modes, and each $\Lap(\loc^T_f\mid\loc^S_k,\scale^S_k)$ is the factorised
+product of the per-step densities~\eqref{eq:per_elem} over the $H$ steps and two
+coordinates; the outer $\sum_f$ is the confidence-weighted average over the
+teacher's modes. Equation~\eqref{eq:v1} is the per-agent loss; the training
+objective averages it over the agents in a batch, with a constant per-element factor
+$1/(2H)$ that rescales it onto the scale of HiVT's regression term so the
+distillation weight $\lambda$ is easy to set---being constant, it leaves the optimum
+unchanged.
+\begin{prop}[Permutation invariance]
+\label{prop:perm}
+Consider any objective of the form
+$\mathcal{L} = -\sum_{f=1}^{K_T} \pi^T_f\, g\!\left(p_S, \loc^T_f, \scale^T_f\right)$,
+in which the student enters \emph{only} through its mixture density $p_S$ (and
+never through an individual student mode). Then reordering the student's modes or
+the teacher's modes leaves $\mathcal{L}$ unchanged, and $\mathcal{L}$ refers to no
+correspondence between the two index sets---so it needs no matching and is defined
+for any $K_S$ and $K_T$, including $K_S \neq K_T$.
+\end{prop}
+\begin{proof}
+Both index sets enter only through sums, and a finite sum does not depend on the
+order of its terms. The student appears only inside
+$p_S(\cdot)=\sum_{k}\pi^S_k\Lap(\cdot\mid\loc^S_k,\scale^S_k)$, so permuting the
+student modes leaves $p_S$---and hence $\mathcal{L}$---unchanged. The teacher
+appears only inside the outer sum $\sum_f$, so permuting the teacher modes leaves
+$\mathcal{L}$ unchanged as well. Because neither sum pairs a student index with a
+teacher index, no matching is ever invoked and the objective is defined for any
+$K_S,K_T$.
+\end{proof}
 
-\section{Why Mean-Target Distillation Breaks Calibration}
+The two distillation losses are both instances of this form; they differ only in the
+choice of $g$, i.e.\ in \emph{what} of each teacher mode is scored under $p_S$: v1,
+just derived in~\eqref{eq:v1}, scores the mean, while v2
+(Section~\ref{ssec:method_v2}) scores samples that also carry the teacher's scale.
+Invariance is a \emph{necessary} property here, not a sufficient one: it guarantees
+the loss never compares mismatched slots, but says nothing about whether the
+resulting target is a good one---indeed v1 is permutation invariant yet still
+degrades calibration (\S\ref{ssec:method_calib}).
+
+\subsection{v1: Mean-Target Distillation}
+\label{ssec:method_v1}
+The objective derived above, $\mathcal{L}_{\mathrm{v1}}$ in~\eqref{eq:v1}, is the
+first variant: it treats each teacher mode as a single \emph{point} target---its
+predicted trajectory (mean) $\loc^T_f$, with the teacher's spread discarded---and
+scores that point under the student mixture density. We now read off its meaning and
+its consequences.
+
+Read as an objective, \eqref{eq:v1} is a confidence-weighted cross-entropy: it takes
+the teacher's mode means as a set of soft targets, weighted by the teacher's own
+confidence $\pi^T_f$, and maximises the student mixture's log-likelihood of them. It
+thus transfers \emph{where} the teacher expects the agent to go (the means
+$\loc^T_f$) and \emph{how likely} it considers each (the weights $\pi^T_f$), while
+\emph{discarding the teacher's scales} $\scale^T_f$---which appear nowhere on the
+right-hand side. Equivalently, each teacher mode is treated as a Dirac point mass at
+$\loc^T_f$ rather than as the spread-out Laplace the teacher actually predicted; this
+is exactly the zero-variance case from which v2 departs
+(Proposition~\ref{prop:limit}).
+
+By Proposition~\ref{prop:perm} the objective is permutation invariant: the student
+enters only through its mixture density $p_S$ and the teacher only through the outer
+$\pi^T_f$-weighted sum, so neither model's mode ordering matters. As shown next, this
+objective improves best-of-$K$ geometry---the student's mode locations are pulled
+toward the teacher's accurate ones---but systematically degrades calibration, a
+direct consequence of those discarded scales.
+
+
+\subsection{Why Mean-Target Distillation Breaks Calibration}
 \label{ssec:method_calib}
 The failure is a direct consequence of discarding $\scale^T_f$, and it can be read
 off the Laplace NLL. Consider, for intuition, a single student mode whose location
@@ -173,30 +421,93 @@ opposes shrinkage. Contrast the baseline regression loss~\eqref{eq:laplace_nll},
 where the residual term $|y-\mu|/b$ \emph{grows} as $b\to0$ whenever the prediction
 is imperfect, so the two terms balance at a finite optimum.
 
-\begin{prop}[Optimal scale of the Laplace NLL]
+\begin{remark}[Optimal scale of the Laplace NLL]
 \label{prop:optb}
 For a fixed location $\mu$ and target drawn from a distribution with
 $\mathbb{E}\,|y-\mu| < \infty$, the scale minimising the expected Laplace NLL
-$\mathbb{E}\!\left[\log(2b) + |y-\mu|/b\right]$ is $b^\star = \mathbb{E}\,|y-\mu|$.
-\end{prop}
-\begin{proof}
-Differentiating $\phi(b)=\log(2b) + \mathbb{E}|y-\mu|/b$ gives
+$\mathbb{E}\!\left[\log(2b) + |y-\mu|/b\right]$ is $b^\star = \mathbb{E}\,|y-\mu|$:
+differentiating $\phi(b)=\log(2b) + \mathbb{E}|y-\mu|/b$ gives
 $\phi'(b)=\tfrac{1}{b}-\tfrac{\mathbb{E}|y-\mu|}{b^2}$, which vanishes at
-$b=\mathbb{E}|y-\mu|$; since $\phi''(b^\star)=1/{b^\star}^2>0$ this is the unique
-minimiser. \qed
-\end{proof}
+$b=\mathbb{E}|y-\mu|$, and $\phi''(b^\star)=1/{b^\star}^2>0$ confirms it is the
+unique minimiser. This is the standard Laplace maximum-likelihood scale (the mean
+absolute deviation).
+\end{remark}
 
-Proposition~\ref{prop:optb} says the well-trained baseline learns a scale that
+Remark~\ref{prop:optb} says the well-trained baseline learns a scale that
 \emph{reports its own typical error}: $b$ is a calibrated uncertainty. The
 mean-target loss removes the residual term that anchors this balance, so the
 student's scales are driven below their calibrated value and the predicted
-intervals become too narrow---the student is \emph{over-confident}. Crucially this
-is a per-mode \emph{scale} pathology, not a collapse of the mode \emph{weights}:
-the argument touches only $\scale$, leaving $\{\pi_k\}$ untouched. The diagnostics
-in Chapter~\ref{ch:results} confirm exactly this signature---scales shrink while
-mode-weight entropy is unchanged.
+intervals become too narrow---the student is \emph{over-confident}.
 
-\section{v2: Distribution-Matching Distillation}
+The single-mode argument above is an intuition; the same conclusion holds for the
+\emph{full} mixture objective~\eqref{eq:v1}, with the mixture's responsibilities
+making it precise. For a student mode $k$, step $t$ and coordinate $d$, define the
+\emph{responsibility} of mode $k$ for teacher mean $f$,
+\begin{equation}
+  \label{eq:resp}
+  r_{f\to k}
+    \;=\; \frac{\pi^S_k\,\Lap\!\left(\loc^T_f\mid\loc^S_k,\scale^S_k\right)}
+               {\sum_{j}\pi^S_j\,\Lap\!\left(\loc^T_f\mid\loc^S_j,\scale^S_j\right)}
+    \;=\; \frac{\pi^S_k\,\Lap\!\left(\loc^T_f\mid\loc^S_k,\scale^S_k\right)}{p_S(\loc^T_f)},
+\end{equation}
+the posterior probability, under the student mixture, that the teacher point
+$\loc^T_f$ was generated by student mode $k$.
+\begin{prop}[Responsibility-weighted stationary scale under v1]
+\label{prop:v1grad}
+The gradient of $\mathcal{L}_{\mathrm{v1}}$ in~\eqref{eq:v1} with respect to a
+student scale $\scale^S_{k,t,d}$ is
+\begin{equation}
+  \label{eq:v1grad}
+  \frac{\partial \mathcal{L}_{\mathrm{v1}}}{\partial \scale^S_{k,t,d}}
+    \;=\; \sum_{f=1}^{K_T} \pi^T_f\, r_{f\to k}
+      \left(\frac{1}{\scale^S_{k,t,d}}
+            - \frac{\bigl\lvert \loc^T_{f,t,d}-\loc^S_{k,t,d}\bigr\rvert}
+                   {\bigl(\scale^S_{k,t,d}\bigr)^2}\right),
+\end{equation}
+so a stationary scale satisfies the responsibility-weighted fixed-point condition
+\begin{equation}
+  \label{eq:v1bstar}
+  \scale^{S\star}_{k,t,d}
+    \;=\; \frac{\sum_f \pi^T_f\, r_{f\to k}\,
+                \bigl\lvert \loc^T_{f,t,d}-\loc^S_{k,t,d}\bigr\rvert}
+               {\sum_f \pi^T_f\, r_{f\to k}} .
+\end{equation}
+Because the responsibilities $r_{f\to k}$ themselves depend on
+$\scale^S_{k,t,d}$ (through both the numerator $\Lap$ and $p_S$ in~\eqref{eq:resp}),
+Equation~\eqref{eq:v1bstar} is an implicit self-consistency condition that
+\emph{characterises} the stationary scale rather than an explicit closed-form
+minimiser; the shrinkage conclusion below does not depend on solving it.
+\end{prop}
+\begin{proof}
+Write $\mathcal{L}_{\mathrm{v1}}=-\sum_f \pi^T_f \log p_S(\loc^T_f)$. Since
+$p_S(\loc^T_f)=\sum_j \pi^S_j\Lap(\loc^T_f\mid\loc^S_j,\scale^S_j)$ and only the
+$j{=}k$ term depends on $\scale^S_{k}$,
+$\partial \log p_S(\loc^T_f)/\partial \scale^S_{k,t,d}
+ = r_{f\to k}\,\partial \log\Lap(\loc^T_{f,t,d}\mid\loc^S_{k,t,d},\scale^S_{k,t,d})/\partial\scale^S_{k,t,d}$
+by~\eqref{eq:resp}. From the Laplace NLL~\eqref{eq:laplace_nll},
+$\partial[-\log(2\scale)-|y-\mu|/\scale]/\partial\scale = -1/\scale + |y-\mu|/\scale^2$.
+Substituting and negating gives~\eqref{eq:v1grad}; setting it to zero and solving
+for $\scale^S_{k,t,d}$ gives~\eqref{eq:v1bstar}.
+\end{proof}
+Equation~\eqref{eq:v1grad} contains \emph{no term that opposes shrinkage}: every
+contribution pushes $\scale^S_{k,t,d}$ toward the residual $|\loc^T_f-\loc^S_k|$,
+and there is no penalty for $\scale\to0$ beyond it. This is the crux. The location
+part of v1 \emph{actively} drives each student mode onto the teacher means it is
+responsible for, so those residuals shrink toward zero; by~\eqref{eq:v1bstar} the
+stationary scale shrinks with them, $\scale^{S\star}\to0$, and the student collapses
+to a spike at the teacher point. The fix in v2 is now visible in advance: replacing
+the point target $\loc^T_f$ by samples $\mathbf{y}\sim\Lap(\loc^T_f,\scale^T_f)$
+makes the residual $\mathbb{E}\,|\mathbf{y}-\loc^S_k|$ bounded below by the
+teacher's own scale even at a perfect location match, so~\eqref{eq:v1bstar} settles
+at $\scale^{S\star}\!\approx\!\scale^T_f>0$ rather than $0$
+(Section~\ref{ssec:method_v2}).
+
+Crucially this is a per-mode \emph{scale} pathology, not a collapse of the mode
+\emph{weights}: the argument touches only $\scale$, leaving $\{\pi_k\}$ untouched.
+The diagnostics in Chapter~\ref{ch:results} confirm exactly this signature---scales
+shrink while mode-weight entropy is unchanged.
+
+\subsection{v2: Distribution-Matching Distillation}
 \label{ssec:method_v2}
 The fix is to restore the discarded spread by scoring not the bare location but
 \emph{samples drawn from the teacher mode using its own scale} $\scale^T_f$. Define
@@ -223,14 +534,84 @@ loss~\eqref{eq:v2} reduces to the mean-target loss~\eqref{eq:v1}.
 As $\scale^T_f\to\mathbf{0}$ the Laplace $\Lap(\loc^T_f,\scale^T_f)$ converges to the
 Dirac measure $\delta_{\loc^T_f}$, so
 $\mathbb{E}_{\mathbf{y}\sim\Lap(\loc^T_f,\scale^T_f)}[\log p_S(\mathbf{y})]
-\to \log p_S(\loc^T_f)$. Substituting into~\eqref{eq:v2} gives~\eqref{eq:v1}. \qed
+\to \log p_S(\loc^T_f)$. Substituting into~\eqref{eq:v2} gives~\eqref{eq:v1}.
 \end{proof}
 
 Thus v2 is the strict generalisation that v1 is the zero-variance limit of: it
 transfers the teacher's full predictive distribution---locations, weights,
 \emph{and} scales---and recovers v1 exactly when the teacher is certain.
 
-\section{The Combined Objective}
+\paragraph{v2 is the forward KL from teacher to student.} Collecting the teacher's
+modes into a single mixture density
+$p_T(\mathbf{y})=\sum_f \pi^T_f\,\Lap(\mathbf{y}\mid\loc^T_f,\scale^T_f)$, the
+$\pi^T_f$-weighted expectation in~\eqref{eq:v2} is precisely an expectation under
+$p_T$, so
+\begin{equation}
+  \label{eq:v2kl}
+  \mathcal{L}_{\mathrm{v2}}
+    = -\sum_{f} \pi^T_f\,
+       \mathbb{E}_{\mathbf{y}\sim\Lap(\loc^T_f,\scale^T_f)}\!\left[\log p_S(\mathbf{y})\right]
+    = -\,\mathbb{E}_{\mathbf{y}\sim p_T}\!\left[\log p_S(\mathbf{y})\right]
+    = \underbrace{\mathrm{KL}\!\left(p_T \Vert p_S\right)}_{\text{depends on }S}
+      + \underbrace{H(p_T)}_{\text{constant}} .
+\end{equation}
+The cross-entropy $-\mathbb{E}_{p_T}\!\log p_S$ decomposes into the \emph{forward}
+KL plus the teacher's own entropy $H(p_T)$, and the latter does not depend on the
+student. Hence $\arg\min_S \mathcal{L}_{\mathrm{v2}} = \arg\min_S
+\mathrm{KL}(p_T\Vert p_S)$: minimising v2 is exactly minimising the forward KL from
+the teacher mixture to the student mixture, estimated by the $S$ Monte-Carlo draws.
+This gives the method a clean information-theoretic identity---v2 is
+distribution matching in the strict sense---and locates v1 within it: v1 is the
+same cross-entropy with $p_T$'s per-mode spread collapsed to point masses
+(Proposition~\ref{prop:limit}), which is why it matches the teacher's mode
+\emph{locations} but discards its \emph{spread} and so breaks calibration
+(\S\ref{ssec:method_calib}).
+
+\paragraph{Why the forward, mode-covering direction.} The forward KL
+$\mathrm{KL}(p_T\Vert p_S)$ is \emph{mode-covering} (zero-avoiding): its integrand
+$p_T(\mathbf{y})\log\!\big(p_T(\mathbf{y})/p_S(\mathbf{y})\big)$ diverges wherever
+the teacher places mass but the student does not ($p_S\!\to\!0$ while $p_T\!>\!0$),
+so the student is driven to put density on \emph{every} manoeuvre the teacher deems
+plausible. The reverse KL $\mathrm{KL}(p_S\Vert p_T)$ is instead
+\emph{mode-seeking} (zero-forcing): it permits the student to lock onto a single
+teacher mode and ignore the rest. For trajectory prediction this asymmetry is
+decisive on safety grounds---\emph{dropping} a plausible manoeuvre (failing to
+predict that the agent might turn) is the dangerous error, since a downstream
+planner that never receives a hypothesis cannot prepare for it, whereas an extra
+low-probability mode is merely conservative. Mode-covering is therefore the correct
+direction, and v2 implements it by construction. Forward KL is additionally the
+simpler direction to optimise against the offline teacher cache: because the
+expectation is taken under the \emph{frozen} teacher, the samples can be drawn
+once from the cached mixture parameters $\{\pi^T_f,\mu^T_f,b^T_f\}$ and treated as
+constants, so the gradient flows through $\log p_S$ alone with no reparameterisation
+(Section~\ref{ssec:method_impl}). Reverse KL is equally implementable from the same
+cache---the Laplace-mixture density $p_T(\mathbf{y})$ and its score are closed-form
+at any query point, so they can be evaluated at fresh student draws without a teacher
+forward pass---but it requires reparameterised samples from the \emph{moving} student
+at every step, a simplicity/efficiency cost rather than a feasibility barrier.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.95\linewidth]{forward_reverse_kl.pdf}
+  \caption[Forward vs.\ reverse KL: mode-covering vs.\ mode-seeking.]{The two KL
+    directions applied to the same bimodal teacher $p_T$ (grey), approximated by a
+    single-mode student $p_S$. \emph{Left:} the \emph{forward} KL
+    $\mathrm{KL}(p_T\Vert p_S)$ takes its expectation under the teacher, so the
+    integrand diverges wherever $p_T>0$ but $p_S\!\to\!0$; the student is therefore
+    driven to \emph{cover} every teacher mode, spreading out even at the cost of
+    placing its own peak in the valley between them (mode-covering / zero-avoiding).
+    \emph{Right:} the \emph{reverse} KL $\mathrm{KL}(p_S\Vert p_T)$ takes its
+    expectation under the student, so it is free to \emph{lock} onto one mode and
+    drop the other (mode-seeking / zero-forcing). For trajectory prediction the
+    dropped mode is the dangerous failure---a manoeuvre the planner never receives.
+    The single-mode student is illustrative; the students in this work are mixtures,
+    but the same asymmetry governs whether a compressed student covers or drops the
+    teacher's lower-probability manoeuvres. This is why the proposed objective uses
+    the forward direction (\S\ref{ssec:method_v2}).}
+  \label{fig:fwd_rev_kl}
+\end{figure}
+
+\subsection{The Combined Objective}
 \label{ssec:method_total}
 In both cases the distillation term is added to HiVT's original loss with a weight
 $\lambda$,
@@ -245,4 +626,104 @@ $\mathcal{L}_{\mathrm{v2}}$ averages a log-density over $S$ samples while
 $\mathcal{L}_{\mathrm{v1}}$ scores a single point, the two terms have different
 magnitudes at the same nominal $\lambda$, so an identical $\lambda$ corresponds to a
 different effective distillation strength in each. The weight is therefore tuned
-separately per variant (Chapter~\ref{ch:impl}).
+separately per variant (Section~\ref{sec:setup}).
+
+\subsection{Implementation}
+\label{ssec:method_impl}
+Three implementation concerns determine whether the distillation signal actually
+reaches the student.
+
+\paragraph{Offline teacher caching.}
+The teacher is frozen, so its predictions for every training scene are computed
+\emph{once} and cached to disk (an HDF5 store of per-scene mode parameters
+$\{\pi^T_f,\loc^T_f,\scale^T_f\}$). Training then reads the teacher targets from the
+cache rather than running a teacher forward pass each step, making the per-epoch
+teacher cost effectively zero and decoupling student training speed from teacher
+size.
+
+\paragraph{Focal-agent target alignment.}
+HiVT predicts all agents in a scene but is evaluated and supervised on the focal
+agent. The cached teacher targets must be aligned to the same focal agent and the
+same local reference frame as the student's predictions before the loss is formed;
+a misalignment here silently distills against the wrong agent. The pipeline asserts
+this correspondence explicitly.
+
+\paragraph{Numerical stability and diagnostics.}
+The mixture log-density $\log\sum_k \pi^S_k\,\Lap(\cdot)$ is evaluated in
+log-space with a $\lse$ reduction to avoid underflow when component densities are
+small. Because distillation can fail \emph{silently}---a mis-scaled or
+mis-aligned signal still produces a plausible loss curve---training is instrumented
+with diagnostics that surface such failures: predicted sharpness ($b$-scale),
+reliability/coverage, mode-weight entropy, and offline mode diversity, reported in
+Chapter~\ref{ch:results}.
+
+\paragraph{The loss in full.}
+Algorithms~\ref{alg:v1} and~\ref{alg:v2} state the per-agent computation of the two
+variants end to end, taking the cached teacher parameters and the student mixture as
+inputs and returning the scalar of~\eqref{eq:v1} or~\eqref{eq:v2}. Both share the
+same skeleton---accumulate per-element Laplace log-densities over the horizon, add
+the student log-weights, reduce the student modes with a stable $\lse$, then take the
+teacher-confidence-weighted sum---and differ only in v2's inner Monte-Carlo loop,
+which replaces each teacher mean by $S$ reparameterised Laplace samples
+(line~\ref{algline:sample}) that carry the teacher's scale $\scale^T_f$.
+
+\begin{algorithm}[htbp]
+\caption{Mean-target distillation loss $\mathcal{L}_{\mathrm{v1}}$ (per agent)}
+\label{alg:v1}
+\begin{algorithmic}[1]
+\Require teacher cache $\{\pi^T_f,\loc^T_f\}_{f=1}^{K_T}$; student mixture
+  $\{z^S_k,\loc^S_k,\scale^S_k\}_{k=1}^{K_S}$ ($z^S$: mode logits); horizon $H$
+\State $\log\pi^S \gets \textsc{LogSoftmax}(z^S)$;\quad
+       $\pi^T \gets \textsc{Softmax}(z^T)$
+\For{$f = 1$ \textbf{to} $K_T$}
+  \For{$k = 1$ \textbf{to} $K_S$}
+    \State $\ell_{k} \gets \sum_{t=1}^{H}\sum_{d=1}^{2}
+            \big[-\log(2\scale^S_{k,t,d}) - |\loc^T_{f,t,d}-\loc^S_{k,t,d}|/\scale^S_{k,t,d}\big]$
+  \EndFor
+  \State $L_f \gets \lse_{k}\big(\log\pi^S_k + \ell_{k}\big)$
+         \Comment{$=\log p_S(\loc^T_f)$, stable log-sum-exp}
+\EndFor
+\State \Return $-\dfrac{1}{2H}\sum_{f=1}^{K_T}\pi^T_f\,L_f$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[htbp]
+\caption{Distribution-matching distillation loss $\mathcal{L}_{\mathrm{v2}}$ (per agent)}
+\label{alg:v2}
+\begin{algorithmic}[1]
+\Require teacher cache $\{\pi^T_f,\loc^T_f,\scale^T_f\}_{f=1}^{K_T}$; student mixture
+  $\{z^S_k,\loc^S_k,\scale^S_k\}_{k=1}^{K_S}$; samples $S$; horizon $H$
+\State $\log\pi^S \gets \textsc{LogSoftmax}(z^S)$;\quad
+       $\pi^T \gets \textsc{Softmax}(z^T)$
+\For{$f = 1$ \textbf{to} $K_T$}
+  \State $A_f \gets 0$
+  \For{$s = 1$ \textbf{to} $S$}
+    \State draw $u\sim\mathcal{U}(-\tfrac12,\tfrac12)^{2H}$;\quad
+           $\mathbf{y} \gets \loc^T_f - \scale^T_f\odot\operatorname{sgn}(u)\odot\log(1-2|u|)$
+           \label{algline:sample}
+           \Comment{reparam.\ Laplace}
+    \For{$k = 1$ \textbf{to} $K_S$}
+      \State $\ell_{k} \gets \sum_{t,d}
+              \big[-\log(2\scale^S_{k,t,d}) - |\mathbf{y}_{t,d}-\loc^S_{k,t,d}|/\scale^S_{k,t,d}\big]$
+    \EndFor
+    \State $A_f \gets A_f + \lse_{k}\big(\log\pi^S_k + \ell_{k}\big)$
+           \Comment{$=\log p_S(\mathbf{y})$}
+  \EndFor
+  \State $L_f \gets A_f / S$ \Comment{Monte-Carlo estimate of $\mathbb{E}\,\log p_S$}
+\EndFor
+\State \Return $-\dfrac{1}{2H}\sum_{f=1}^{K_T}\pi^T_f\,L_f$
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Cost.}
+Per agent, v1 evaluates the $K_S\times K_T$ trajectory scores at $O(K_T K_S H)$ and
+v2 multiplies this by the sample count, $O(K_T\,S\,K_S\,H)$; both are linear in
+every factor and free of any assignment solve. This compares favourably with the
+$O(K^3)$ Hungarian matching of the alternative in
+Section~\ref{ssec:method_design}, and---unlike a matching loss---is differentiable
+and needs no special handling when $K_S\neq K_T$. The teacher's own cost is
+\emph{amortised to zero}: its mixture parameters are read from the offline cache in
+$O(K_T H)$ per scene rather than recomputed, so the distillation overhead is
+independent of teacher size. With the Argoverse settings
+($K_S{=}K_T{=}6$, $S{=}8$, $H{=}30$) the loss adds a few thousand floating-point
+operations per agent, negligible beside the student forward pass.

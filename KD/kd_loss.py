@@ -137,7 +137,7 @@ class HiVTKDLoss(nn.Module):
         # Add student log mixture weights:  [B,K] -> [K,1,B]
         # log p_student(traj) = log( sum over k of  exp( log π[k] + log Lap(traj | mode k) ) )
         log_w = log_pi_s.permute(1, 0).unsqueeze(1)              # [K,1,B]
-        log_joint = log_w + log_dens                            # [K,F,B]
+        log_joint = log_w + log_dens                            # [K,F,B] #log_joint[k] already means log(π_k · p_k). log_w
 
         # Mixture log-likelihood = logsumexp over the student's K modes.
         return torch.logsumexp(log_joint, dim=0)                # [F,B]
@@ -167,6 +167,7 @@ class HiVTKDLoss(nn.Module):
         w   = pi_t_soft.permute(1, 0)                  # [F,B]
         nll = -(w * log_p).sum(dim=0)                  # [B]
         kd_loss = nll.mean() / norm                    # scalar
+        # Σ_f π_T[f] · log p_student(teacher-f)   =   E_{f ~ teacher}[ log p_student(teacher-f) ]
 
         total = self.lambda_kd * kd_loss
         return total, {
@@ -251,13 +252,17 @@ class HiVTKDLossDist(HiVTKDLoss):
         pi_t_soft = torch.softmax(pi_t, dim=-1)          # [B,F]
 
         # Draw teacher samples and fold S into the "target" axis: [S*F, B, H, D]
+#  For each teacher mode f, instead of taking just its center μ_T,f, we draw S random points (default S=8) scattered around that center, with the scatter width equal to the teacher's own b_T,f.
+# Teacher very confident at some timestep (small b_T) → the 8 samples cluster tightly near the mean.
+# Teacher unsure (large b_T) → the 8 samples spread out wide.
         samples = self._sample_teacher(loc_t, scale_t)   # [S,F,B,H,D]
         samples = samples.reshape(S * Fm, B, H, D)
 
         # log p_student over the K-mode mixture for every sample -> [S*F, B]
+        # score every sample under the student mixture
         log_p = self._student_mixture_logprob(samples, loc_s, scale_s, log_pi_s)
         log_p = log_p.reshape(S, Fm, B).mean(dim=0)      # MC average -> [F,B]
-
+#the average of log p_student over the cloud
         # Weight by teacher confidence, sum over teacher modes, per-element norm.
         w   = pi_t_soft.permute(1, 0)                    # [F,B]
         nll = -(w * log_p).sum(dim=0)                    # [B]

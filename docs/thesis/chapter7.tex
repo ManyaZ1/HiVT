@@ -58,10 +58,12 @@ Several limitations bound the claims of this work and motivate the directions be
   \item \textbf{Single dataset and backbone.} All results are on Argoverse~1 with
         the HiVT architecture; generality to other datasets (Argoverse~2,
         nuScenes, Waymo) and other mixture-based predictors is untested.
-  \item \textbf{Single-seed runs.} The headline A/B comparisons are single training
-        runs. Most effects are far larger than plausible run-to-run noise, but the
-        smaller calibration differences would be firmer with multiple seeds (a
-        second HiVT-16 seed is available but not yet evaluated).
+  \item \textbf{Limited seed counts.} The HiVT-16 A/B is confirmed over multiple
+        seeds (no~KD $n{=}2$, v2 $n{=}3$; Section~\ref{ssec:res_seeds}), where the
+        gain is reproducible and well outside the seed spread, but the HiVT-32 A/Bs
+        remain single training runs. Most effects are far larger than plausible
+        run-to-run noise; the smaller calibration differences at HiVT-32 would be
+        firmer with seed replication.
   \item \textbf{Proxy-based hyperparameter selection.} The $\lambda$ and recipe
         choices are ranked on a $25\%$-data, short-schedule proxy. The proxy ranked
         correctly and even \emph{under}-stated the full-data gain here, but it is
@@ -74,9 +76,14 @@ Several limitations bound the claims of this work and motivate the directions be
 \label{sec:concl_future}
 
 \begin{itemize}[leftmargin=1.4em]
-  \item \textbf{Multi-seed variance.} Evaluate the existing second-seed HiVT-16 run
-        and add seeds for the HiVT-32 A/Bs, reporting mean$\pm$spread to harden the
-        calibration claims (Section~\ref{ssec:res_v2}).
+  \item \textbf{Multi-seed variance and training stability.} Extend the HiVT-16
+        seed study (Section~\ref{ssec:res_seeds}) to the HiVT-32 A/Bs, reporting
+        mean$\pm$spread to harden the calibration claims
+        (Section~\ref{ssec:res_v2}). A related thread is the observation that the
+        from-scratch HiVT-16 occasionally collapses into a degenerate optimum
+        while none of the distilled runs did: a larger seed sweep could test
+        whether distillation reliably \emph{stabilises} training away from that
+        basin.
   \item \textbf{Other backbones and datasets.} Apply the permutation-invariant v2
         loss to other mixture predictors and to Argoverse~2 / nuScenes, testing
         whether the ``calibration-preserving, larger-gain-for-smaller-students''

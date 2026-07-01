@@ -11,7 +11,8 @@ from-scratch capacity baselines that quantify the accuracy cost of shrinking HiV
 honest (Section~\ref{sec:res_recipe}). It then presents the central result---the
 contrast between the two distillation objectives on HiVT-32
 (Section~\ref{sec:res_kd32})---and its replication, with a larger relative gain, on
-the smaller HiVT-16 (Section~\ref{sec:res_kd16}). Finally it consolidates the
+the smaller HiVT-16, where the gain is further confirmed across independent random
+seeds (Section~\ref{sec:res_kd16}). Finally it consolidates the
 accuracy--capacity trade-off across all models (Section~\ref{sec:res_frontier}),
 measures the inference efficiency that motivates the whole exercise
 (Section~\ref{sec:res_eff}), and closes with qualitative and diagnostic analysis
@@ -42,7 +43,7 @@ same-width from-scratch model}.
     \midrule
     HiVT-128 (teacher) & 2{,}559{,}993 & 0.6611 & 0.9692 & 0.0920 & 21.05 & 0.0466 \\
     HiVT-64            & 653{,}369    & 0.6869 & 1.0301 & 0.1026 & 23.02 & 0.0416 \\
-    HiVT-32            & 170{,}073    & 0.7361 & 1.1574 & 0.1217 & 26.61 & 0.0325 \\
+    HiVT-32            & 170{,}073    & 0.7361 & 1.1568 & 0.1217 & 26.61 & 0.0325 \\
     HiVT-16            & 45{,}929     & 0.8858 & 1.6053 & 0.1988 & 35.22 & 0.0279 \\
     \bottomrule
   \end{tabular}
@@ -51,8 +52,14 @@ same-width from-scratch model}.
 Two patterns matter for what follows. First, geometric error grows
 \emph{faster than linearly} as width falls: halving width from $64$ to $32$ costs
 $+0.127$\,m minFDE, but halving again from $32$ to $16$ costs $+0.448$\,m---the
-small end of the ladder is where capacity hurts most, and therefore where
-distillation has the most to recover. Second, the from-scratch models are already
+accuracy penalty steepens with every halving, so it is precisely the smallest
+students that have the most for distillation to recover. (Width and parameter count
+are themselves not linearly related: the parameter count scales roughly with $d^2$,
+so each halving of the width removes about three-quarters of the parameters---as the
+Params column makes plain ($170{,}073\!\to\!45{,}929$ from $d{=}32$ to $d{=}16$) and
+as developed in Section~\ref{sec:res_eff}---which is why the steep accuracy loss at
+the bottom of the ladder is paired with a disproportionately large parameter saving.)
+Second, the from-scratch models are already
 \emph{well calibrated} (calibration error $\le 0.047$ everywhere, in fact lowest at
 the smallest widths): calibration is not a pre-existing defect to be fixed, which
 is precisely why a distillation method that \emph{damages} it (v1,
@@ -65,17 +72,51 @@ The students trained in this work require two width-dependent choices---learning
 rate and attention-head count---that were fixed by short sweeps before any
 distillation. Settling these on the \emph{from-scratch} model ensures the later
 distillation comparison is against a properly tuned, not a handicapped, baseline.
+The throughput-only settings---batch size, data-loader workers, and
+\texttt{bfloat16} mixed precision---are not width-dependent, were tuned once for the
+training machine (an RTX~5060), and are held fixed across every run reported in this
+chapter; they affect wall-clock time but not accuracy and are detailed in
+Section~\ref{ssec:setup_models}.
 
 \subsection{Learning rate}
 \label{ssec:res_lr}
-HiVT-32 trains best at $\eta=3\times10^{-3}$, selected by a learning-rate sweep on
-a $25\%$-data proxy (logged to Weights \& Biases). HiVT-16, in contrast,
+HiVT-32 trains best at $\eta=3\times10^{-3}$, selected by a learning-rate sweep on a
+$25\%$-data proxy (Table~\ref{tab:lr32}). Across the five rates swept, geometry
+improves as $\eta$ rises from $5\times10^{-4}$ to $3\times10^{-3}$---the smallest
+rate underfits badly in the short schedule (minFDE $2.54$)---and then \emph{regresses}
+at $4\times10^{-3}$, giving a clean interior optimum at $\eta=3\times10^{-3}$, best on
+every metric; Figure~\ref{fig:lr32} shows the same ranking in the convergence curves.
+This rate is used for all HiVT-32 runs.
+
+\begin{table}[htbp]
+  \centering
+  \caption{HiVT-32 learning-rate sweep ($25\%$ data, $15$-epoch short schedule,
+    batch size $128$, from-scratch/no~KD). $\eta=3\times10^{-3}$ is best on every
+    metric, with $4\times10^{-3}$ already regressing. Lower is better except
+    reg-loss (best-mode regression NLL; more negative is better). Calibration
+    metrics were not logged in this early proxy sweep, so geometry and reg-loss are
+    shown.}
+  \label{tab:lr32}
+  \begin{tabular}{lrrrrr}
+    \toprule
+    Metric & $\eta=5\mathrm{e}{-}4$ & $\eta=1\mathrm{e}{-}3$ & $\eta=2\mathrm{e}{-}3$ & $\boldsymbol{\eta=3\mathrm{e}{-}3}$ & $\eta=4\mathrm{e}{-}3$ \\
+    \midrule
+    minADE   & 1.3211 & 1.0493 & 0.9437 & \textbf{0.8855} & 0.9276 \\
+    minFDE   & 2.5387 & 1.9737 & 1.6979 & \textbf{1.5396} & 1.6738 \\
+    MR       & 0.3042 & 0.2356 & 0.2075 & \textbf{0.1810} & 0.2058 \\
+    reg-loss & 0.0655 & $-0.0062$ & $-0.0489$ & $\mathbf{-0.0712}$ & $-0.0602$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+HiVT-16, in contrast,
 \emph{diverges in quality} at that rate: Table~\ref{tab:lr16} shows the $25\%$
 proxy sweep, in which $\eta=1\times10^{-3}$ is best by a wide margin and the higher
 rates ($2$--$3\times10^{-3}$) nearly double minFDE. The same $\eta=3\times10^{-3}$
 that is optimal for HiVT-32 drives HiVT-16 to minFDE $3.22$ on full data---a
 non-converged model. The smaller network thus needs the gentler step; this
-$\eta=1\times10^{-3}$ is used for all HiVT-16 runs.
+$\eta=1\times10^{-3}$ is used for all HiVT-16 runs, and
+Figure~\ref{fig:lr16} shows the same ranking in the convergence curves.
 
 \begin{table}[htbp]
   \centering
@@ -95,14 +136,55 @@ $\eta=1\times10^{-3}$ is used for all HiVT-16 runs.
   \end{tabular}
 \end{table}
 
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.48\linewidth]{figures/valminFDE_hivt32_lrsweep.png}\hfill
+  \includegraphics[width=0.48\linewidth]{figures/val_minMR_hivt32_lrsweep.png}\\[6pt]
+  \IfFileExists{figures/val_minADE_hivt32_lrsweep.png}
+    {\includegraphics[width=0.48\linewidth]{figures/valregloss_hivt32_lrsweep.png}\hfill
+     \includegraphics[width=0.48\linewidth]{figures/val_minADE_hivt32_lrsweep.png}}
+    {\includegraphics[width=0.48\linewidth]{figures/valregloss_hivt32_lrsweep.png}}
+  \caption[HiVT-32 learning-rate sweep.]{HiVT-32 from-scratch learning-rate sweep
+    ($25\%$-data proxy, no distillation): validation minFDE (top-left), miss rate
+    (top-right), best-mode regression NLL (bottom-left) and minADE (bottom-right)
+    against training step, for
+    $\eta\in\{5\mathrm{e}{-}4,\,1\mathrm{e}{-}3,\,2\mathrm{e}{-}3,\,3\mathrm{e}{-}3,\,
+    4\mathrm{e}{-}3\}$. The convergence view: $\eta=5\times10^{-4}$ (the slowest,
+    highest-plateauing curve) clearly underfits, while the higher rates converge
+    close together; the precise final-epoch ranking---and the interior optimum at
+    $\eta=3\times10^{-3}$---is given in Table~\ref{tab:lr32}. The regression-NLL
+    panel corroborates the geometric panels on the likelihood axis.}
+  \label{fig:lr32}
+\end{figure}
+\begin{figure}[htbp]
+  \centering
+  \IfFileExists{figures/lrtriage16_mr.png}{%
+    \includegraphics[width=0.49\linewidth]{figures/lrtriage16_mr.png}\hfill
+    \includegraphics[width=0.49\linewidth]{figures/lrtriage16_b.png}%
+  }{%
+    \fbox{\parbox[c][0.30\linewidth][c]{0.9\linewidth}{\centering\itshape
+      Placeholder --- export the two HiVT-16 learning-rate-sweep W\&B panels as
+      \texttt{figures/lrtriage16\_mr.png} (miss rate) and
+      \texttt{figures/lrtriage16\_b.png} (mean Laplace scale).}}%
+  }
+  \caption[HiVT-16 learning-rate sweep.]{HiVT-16 from-scratch learning-rate sweep
+    ($25\%$-data proxy, no distillation): validation miss rate (left) and mean
+    predictive Laplace scale $b$ (right) against training step, for
+    $\eta\in\{5\mathrm{e}{-}4,\,1\mathrm{e}{-}3,\,2\mathrm{e}{-}3,\,3\mathrm{e}{-}3\}$.
+    The convergence view of Table~\ref{tab:lr16}: $\eta=1\times10^{-3}$ converges
+    cleanly while the higher rates plateau worse, and the same rate yields the
+    best-behaved predictive scale.}
+  \label{fig:lr16}
+\end{figure}
+
 \subsection{Attention heads}
 \label{ssec:res_heads}
 HiVT uses $8$ attention heads by default, so the per-head dimension shrinks with
 width (Section~\ref{ssec:setup_models}). At HiVT-32 this is benign:
 Table~\ref{tab:heads32} compares $2$ heads (head dimension $16$) against the
 default $8$ (head dimension $4$) on the from-scratch model, and the two are
-indistinguishable on geometry---every displacement metric moves under $1.5\%$ and
-the differences flip sign, i.e.\ single-run noise. At $d{=}32$ there is simply not
+indistinguishable on geometry---every displacement metric moves under $\sim\!2\%$,
+i.e.\ single-run noise, and calibration differs by under $3\%$. At $d{=}32$ there is simply not
 enough width for $8$ heads to express more than $2$, so head count is not a
 meaningful lever and the baseline may use either; the default $8$ is retained.
 
@@ -116,11 +198,11 @@ meaningful lever and the baseline may use either; the default $8$ is retained.
     \toprule
     Metric & 2 heads & 8 heads & $\Delta$ \\
     \midrule
-    minADE      & 0.7381 & 0.7365 & $+0.22\%$ \\
-    minFDE      & 1.1622 & 1.1574 & $+0.41\%$ \\
-    MR          & 0.1242 & 0.1225 & $+1.40\%$ \\
-    mixNLL      & 26.891 & 26.695 & $+0.73\%$ \\
-    calib.\ err & 0.0316 & 0.0362 & $-12.8\%$ \\
+    minADE      & 0.7381 & 0.7361 & $+0.27\%$ \\
+    minFDE      & 1.1622 & 1.1568 & $+0.47\%$ \\
+    MR          & 0.1242 & 0.12171 & $+2.08\%$ \\
+    mixNLL      & 26.891 & 26.610 & $+1.06\%$ \\
+    calib.\ err & 0.0316 & 0.0325 & $-2.9\%$ \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -133,7 +215,8 @@ minFDE rising from $2.95$ (nh$=2$, head dimension $8$) through $3.25$ (nh$=4$) t
 $3.69$ (nh$=8$, head dimension $2$)---a $25\%$ relative loss---and the best-mode
 regression NLL nearly doubling at nh$=8$, a sign the smallest-head model trains
 poorly. Two heads is clearly best, so HiVT-16 uses $2$ heads for every reported
-result. This mirrors and sharpens the HiVT-32 finding: head count is immaterial
+result; Figure~\ref{fig:heads16} shows the same monotone degradation in the
+convergence curves. This mirrors and sharpens the HiVT-32 finding: head count is immaterial
 when the width is ample (HiVT-32) but becomes a real lever once the width is small
 enough that adding heads starves each of dimension (HiVT-16).
 
@@ -157,6 +240,25 @@ enough that adding heads starves each of dimension (HiVT-16).
   \end{tabular}
 \end{table}
 
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.6\linewidth]{figures/hivt16_headstriage_minFDE.png}\\[4pt]
+  \includegraphics[width=0.6\linewidth]{figures/hivt16_headstriage_minMR.png}\\[4pt]
+  \IfFileExists{figures/hivt16_headstriage_regloss.png}
+    {\includegraphics[width=0.6\linewidth]{figures/hivt16_headstriage_regloss.png}\\[4pt]}
+    {}%
+  \includegraphics[width=0.6\linewidth]{figures/hivt16_headstriage_CALLIBERROR.PNG}
+  \caption[HiVT-16 attention-head sweep.]{HiVT-16 from-scratch attention-head sweep
+    ($25\%$-data proxy, no distillation): validation minFDE, miss rate, best-mode
+    regression NLL and calibration error against training step, for
+    nh${\in}\{2,4,8\}$ (head dimension $16/\mathrm{nh}$). Geometry degrades
+    monotonically as heads are added and each is starved of dimension, and the
+    regression NLL jumps at nh${=}8$---the smallest-head model trains poorly. The
+    final-epoch ranking is given in Table~\ref{tab:heads16}.}
+  \label{fig:heads16}
+\end{figure}
+
+\clearpage
 \section{Distillation on HiVT-32: Mean-Target vs.\ Distribution-Matching}
 \label{sec:res_kd32}
 
@@ -180,7 +282,7 @@ $\lambda\!\approx\!0.25$--$0.5$ best on geometry; $\lambda=0.5$ is carried forwa
 as the operating point, being the standard value in the distillation literature
 and a reasonable geometry/calibration compromise.
 
-\begin{figure}[htbp]
+\begin{figure}[h]
   \centering
   \includegraphics[width=\linewidth]{figures/kd_lambda_sweep.png}
   \caption{HiVT-32 v1 (mean-target) distillation-weight sweep ($25\%$ data).
@@ -194,18 +296,18 @@ and a reasonable geometry/calibration compromise.
 \label{ssec:res_v1}
 Table~\ref{tab:ab32} is the clean A/B at full data and the chosen $\lambda=0.5$:
 the same recipe, with the distillation term switched on. Geometry improves
-substantially and consistently---minFDE $-9.2\%$, MR $-13.8\%$, minADE
-$-5.5\%$---and the official ranking metric brier-minFDE improves by $5.3\%$. But
-the full-distribution metrics collapse: mixNLL worsens by $41\%$ and the
-calibration error rises five-fold, from $0.036$ to $0.183$. The mean scale $b$
-drops $35\%$ ($0.413\to0.268$): the student has been driven well below its own
+substantially and consistently---minFDE $-9.2\%$, MR $-13.4\%$, minADE
+$-5.5\%$---and the official ranking metric brier-minFDE improves by $5.2\%$. But
+the full-distribution metrics collapse: mixNLL worsens by $43\%$ and the
+calibration error rises more than five-fold, from $0.033$ to $0.184$. The mean scale $b$
+drops $36\%$ ($0.418\to0.268$): the student has been driven well below its own
 calibrated width and is now systematically over-confident, as the reliability
 curves of Figure~\ref{fig:reliability} confirm---the predicted intervals cover far
 fewer ground-truth points than their nominal probability, and the under-coverage
 worsens monotonically with $\lambda$. The same shrinkage shows in the two final
-rows: the predicted $90\%$ interval now captures only $71.3\%$ of ground-truth
-endpoints (cov@p90 $0.900\to0.713$), and even HiVT's own winner-takes-all
-regression NLL (reg-loss) worsens ($-0.246\to-0.188$)---the single \emph{best} mode
+rows: the predicted $90\%$ interval now captures only $71.1\%$ of ground-truth
+endpoints (cov@p90 $0.903\to0.711$), and even HiVT's own winner-takes-all
+regression NLL (reg-loss) worsens ($-0.247\to-0.187$)---the single \emph{best} mode
 assigns lower density to the truth despite sitting geometrically closer to it,
 because its scale has shrunk faster than its location error has fallen. The
 over-confidence is thus visible even on the best mode, not only across the full
@@ -216,27 +318,43 @@ mixture.
   \caption{HiVT-32, v1 distillation A/B (full data): no KD ($\lambda{=}0$) vs.\
     mean-target KD ($\lambda{=}0.5$). v1 trades calibration for geometry. Lower is
     better for all rows except $b$-scale (the drop reflects over-confidence),
-    cov@p90 (closer to the nominal $0.90$ is better, so the fall to $0.713$ is
+    cov@p90 (closer to the nominal $0.90$ is better, so the fall to $0.711$ is
     under-coverage), and reg-loss (more negative is better, so the rise is worse).}
   \label{tab:ab32}
   \begin{tabular}{lrrr}
     \toprule
     Metric & no KD & v1 ($\lambda{=}0.5$) & $\Delta$ \\
     \midrule
-    minADE        & 0.7365 & 0.6958 & $-5.5\%$ \\
-    minFDE        & 1.1574 & 1.0509 & $-9.2\%$ \\
-    MR            & 0.1225 & 0.1056 & $-13.8\%$ \\
-    brier-minFDE  & 1.8197 & 1.7235 & $-5.3\%$ \\
-    mixNLL        & 26.695 & 37.624 & $+40.9\%$ \\
-    calib.\ err   & 0.0362 & 0.1827 & $+405\%$ \\
-    $b$-scale     & 0.4129 & 0.2678 & $-35.1\%$ \\
-    cov@p90       & 0.900  & 0.713  & $-0.187$ \\
-    reg-loss      & $-0.2459$ & $-0.1876$ & $+0.058$ \\
+    minADE        & 0.7361 & 0.6959 & $-5.5\%$ \\
+    minFDE        & 1.1568 & 1.0503 & $-9.2\%$ \\
+    MR            & 0.1217 & 0.1054 & $-13.4\%$ \\
+    brier-minFDE  & 1.8176 & 1.7239 & $-5.2\%$ \\
+    mixNLL        & 26.610 & 37.953 & $+42.6\%$ \\
+    calib.\ err   & 0.0325 & 0.1835 & $+465\%$ \\
+    $b$-scale     & 0.4179 & 0.2675 & $-36.0\%$ \\
+    cov@p90       & 0.903  & 0.711  & $-0.192$ \\
+    reg-loss      & $-0.2473$ & $-0.1873$ & $+0.060$ \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\begin{figure}[htbp]
+\paragraph{How to read the reliability curves.}
+The calibration metrics summarise the predicted \emph{uncertainty}, so it is worth
+stating how they are formed. For the best mode's per-coordinate Laplace$(\mu,b)$,
+the probability that the truth falls within a symmetric interval of half-width $t$
+about $\mu$ is $P(|y-\mu|\le t)=1-e^{-t/b}$, so the central interval with nominal
+coverage $p$ has half-width $t(p)=-b\ln(1-p)$. For each nominal level
+$p\in\{0.1,\dots,0.9\}$ the \emph{empirical} coverage is the fraction of valid
+(agent, step, coordinate) triples whose ground truth lies inside that interval;
+plotting empirical against nominal gives the reliability curve, and a perfectly
+calibrated model lies on the diagonal $\mathrm{empirical}(p)=p$. A curve \emph{below}
+the diagonal means the intervals are too narrow---the truth escapes them more often
+than promised---i.e.\ over-confidence; \emph{above} means under-confidence. The
+single calibration-error scalar is the mean absolute gap
+$\tfrac1L\sum_p|\mathrm{empirical}(p)-p|$ over the $L{=}9$ levels, and cov@p90 is the
+empirical coverage at $p{=}0.9$.
+
+\begin{figure}[h]
   \centering
   \includegraphics[width=0.62\linewidth]{figures/reliability_v1_sweep.png}
   \caption{Reliability (empirical vs.\ nominal coverage) for HiVT-32 under v1
@@ -271,20 +389,20 @@ loss. Table~\ref{tab:v2_32} places v2 beside v1 and the baseline.
     \toprule
     Metric & no KD & v1 & \textbf{v2} & teacher \\
     \midrule
-    minADE       & 0.7365 & 0.6958 & \textbf{0.6982} & 0.6611 \\
-    minFDE       & 1.1574 & 1.0509 & \textbf{1.0505} & 0.9692 \\
-    MR           & 0.1225 & 0.1056 & \textbf{0.1063} & 0.0920 \\
-    brier-minFDE & 1.8197 & 1.7235 & \textbf{1.7240} & --- \\
-    mixNLL       & 26.69  & 37.62  & \textbf{24.18}  & 21.05 \\
-    calib.\ err  & 0.0362 & 0.1827 & \textbf{0.0275} & 0.0466 \\
-    $b$-scale    & 0.4129 & 0.2678 & \textbf{0.4126} & 0.358 \\
-    cov@p90      & 0.900  & 0.713  & \textbf{0.909}  & 0.894 \\
+    minADE       & 0.7361 & 0.6959 & \textbf{0.6982} & 0.6611 \\
+    minFDE       & 1.1568 & 1.0503 & \textbf{1.0505} & 0.9692 \\
+    MR           & 0.12171 & 0.1054 & \textbf{0.1063} & 0.0920 \\
+    brier-minFDE & 1.8176 & 1.7239 & \textbf{1.7240} & --- \\
+    mixNLL       & 26.61  & 37.95  & \textbf{24.18}  & 21.05 \\
+    calib.\ err  & 0.0325 & 0.1835 & \textbf{0.0275} & 0.0466 \\
+    $b$-scale    & 0.4179 & 0.2675 & \textbf{0.4126} & 0.358 \\
+    cov@p90      & 0.903  & 0.711  & \textbf{0.909}  & 0.894 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-v2 ties v1 on geometry exactly (minFDE $1.0505$ vs.\ $1.0509$) and eliminates the
-calibration penalty entirely: the calibration error falls to $0.0275$---$6.6\times$
+v2 ties v1 on geometry exactly (minFDE $1.0505$ vs.\ $1.0503$) and eliminates the
+calibration penalty entirely: the calibration error falls to $0.0275$---$6.7\times$
 better than v1, and lower than both the from-scratch baseline and the teacher---and
 cov@p90 returns to nominal. The mean scale recovers to $0.413$, the student's own
 calibrated width. (That this exceeds the teacher's $0.358$ is expected and correct:
@@ -293,13 +411,63 @@ a less-accurate student has larger typical error, so honest calibration
 v2 thus delivers the full accuracy gain of distillation at zero calibration cost,
 confirming the chapter's central hypothesis on HiVT-32.
 
+\begin{figure}[htbp]
+  \centering
+  \IfFileExists{figures/minFDE_32-kd_comparison.png}{%
+    \includegraphics[width=0.72\linewidth]{figures/minFDE_32-kd_comparison.png}%
+  }{%
+    \fbox{\parbox[c][0.30\linewidth][c]{0.9\linewidth}{\centering\itshape
+      Placeholder --- export the HiVT-32 minFDE W\&B panel, three matched runs
+      (no-KD, v1, v2), as \texttt{figures/minFDE\_32-kd\_comparison.png}.}}%
+  }
+  \caption[Training dynamics: minFDE.]{HiVT-32 training dynamics, primary geometry
+    metric (Weights \& Biases): three matched runs at $\eta=3\times10^{-3}$, batch
+    size $128$---no-KD ($\lambda{=}0$), v1 mean-target ($\lambda{=}0.5$), and v2
+    distribution-matching ($\lambda{=}0.5$). Validation minFDE: v1 and v2 are
+    indistinguishable and both fall below the no-KD baseline, so the geometric gain
+    is identical across the two objectives. The remaining diagnostics---brier-minFDE
+    and the two likelihood metrics---are in Figure~\ref{fig:wandb_dynamics_nll}.}
+  \label{fig:wandb_dynamics}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \IfFileExists{figures/brier32-kd_comparison.png}{%
+    \includegraphics[width=0.62\linewidth]{figures/brier32-kd_comparison.png}\\[6pt]
+    \includegraphics[width=0.62\linewidth]{figures/mixnll32-kd_comparison.png}\\[6pt]
+    \includegraphics[width=0.62\linewidth]{figures/regloss32-kd_comparison.png}%
+  }{%
+    \fbox{\parbox[c][0.30\linewidth][c]{0.9\linewidth}{\centering\itshape
+      Placeholder --- export the three remaining HiVT-32 W\&B panels, three matched
+      runs each (no-KD, v1, v2), as \texttt{figures/brier32-kd\_comparison.png},
+      \texttt{figures/mixnll32-kd\_comparison.png} and
+      \texttt{figures/regloss32-kd\_comparison.png}.}}%
+  }
+  \caption[Training dynamics: probabilistic metrics.]{HiVT-32 training dynamics,
+    probabilistic metrics (Weights \& Biases), same three matched runs as
+    Figure~\ref{fig:wandb_dynamics}. \textbf{brier-minFDE (top, geometry):} v1 and v2
+    again track each other below the no-KD baseline, confirming the shared geometric
+    gain. \textbf{Mixture NLL and best-mode regression NLL (likelihood):} against that
+    fixed geometry, v1 \emph{diverges upward} (over-confident) while v2 falls below
+    baseline. The split is present throughout training, not only at
+    convergence---and because geometry is improving in the same runs, a rising NLL
+    can only be the scale shrinkage of Proposition~\ref{prop:v1grad}, visible on both
+    the full mixture and the single best mode. (b-scale and calibration error are not
+    shown here: they were logged only for the v2 run, but their endpoint values appear
+    in Tables~\ref{tab:ab32} and~\ref{tab:v2_32}.)}
+  \label{fig:wandb_dynamics_nll}
+\end{figure}
+
+
+\clearpage
 \section{Distillation on HiVT-16}
 \label{sec:res_kd16}
 
 The HiVT-16 experiments test whether the v2 result replicates at a smaller width
 and whether, as hypothesised, the relative benefit \emph{grows} as the student
 shrinks. Because the v1 calibration failure is already established, HiVT-16 is run
-directly with v2.
+directly with v2. HiVT-16 is trained with $2$ attention heads and 
+$\eta=1\times10^{-3}$ (Section~\ref{sec:res_recipe}).
 
 \subsection{Distillation-weight sweep}
 The $\lambda$-sweep ($25\%$ proxy, Table~\ref{tab:kl16}) shows a clear knee at
@@ -368,9 +536,179 @@ at HiVT-32---roughly $2.5\times$ larger for the smaller network. This is the
 expected ordering: the student with the largest gap to the teacher has the most to
 gain from its guidance, and distillation is correspondingly more valuable exactly
 where capacity is scarcest.
-% TODO(optional): if the second-seed HiVT-16 run (kl1.0-full-s1) is evaluated,
-% report mean +/- spread here to harden the calibration claims.
+\subsection{Seed robustness}
+\label{ssec:res_seeds}
+The HiVT-16 A/B above (Table~\ref{tab:ab16}) is a single training run per arm. To
+confirm the gain is not an artefact of one lucky initialisation, the baseline and
+the v2 student were each retrained from additional random seeds and re-evaluated
+under the identical recipe; Table~\ref{tab:seeds16} reports the resulting
+mean$\pm$standard deviation. The effect is highly reproducible: on the means
+minFDE falls by $-23.9\%$ ($1.608\to1.224$), with each arm's seed spread roughly
+an order of magnitude smaller than the gap between the arms, and every calibration
+metric again moving the right way (mixNLL $-17.1\%$, calibration error $-20.2\%$).
+The multi-seed means are, if anything, slightly stronger than the single-run
+figures of Table~\ref{tab:ab16}, so none of the chapter's HiVT-16 claims rests on
+a favourable seed.
 
+\begin{table}[htbp]
+  \centering
+  \caption{HiVT-16 multi-seed confirmation (full data, $64$ epochs):
+    mean$\pm$sample standard deviation over independent random seeds (no~KD
+    $n{=}2$, v2 $n{=}3$). One further from-scratch seed that collapsed into the
+    degenerate optimum of Section~\ref{ssec:res_heads} is excluded as
+    non-converged (see text); $\Delta$ is computed on the means. Lower is better
+    for all rows. The distillation gain is reproducible and lies well outside the
+    seed spread.}
+  \label{tab:seeds16}
+  \begin{tabular}{lccr}
+    \toprule
+    Metric & no KD ($n{=}2$) & v2, $\lambda{=}1.0$ ($n{=}3$) & $\Delta$ \\
+    \midrule
+    minADE      & $0.887 \pm 0.002$   & $0.771 \pm 0.005$   & $-13.0\%$ \\
+    minFDE      & $1.608 \pm 0.004$   & $1.224 \pm 0.018$   & $-23.9\%$ \\
+    MR          & $0.198 \pm 0.001$   & $0.130 \pm 0.002$   & $-34.2\%$ \\
+    mixNLL      & $35.5 \pm 0.3$      & $29.4 \pm 0.3$      & $-17.1\%$ \\
+    calib.\ err & $0.0287 \pm 0.0011$ & $0.0229 \pm 0.0004$ & $-20.2\%$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+One from-scratch seed is excluded from the means above, and the reason is itself
+informative. Rather than converging to the $\approx\!1.6$ minFDE basin of the
+other baseline runs, it collapsed into the degenerate $\approx\!3.2$ optimum
+characterised in Section~\ref{ssec:res_heads}---the same attractor the
+under-dimensioned $8$-head ($\mathrm{head\_dim}{=}2$) and over-large
+learning-rate ($\eta{=}3\mathrm{e}{-}3$) HiVT-16 configurations fall into.
+Evaluating that checkpoint on the full validation set
+(Table~\ref{tab:collapse16}) shows precisely \emph{what} the degenerate optimum
+is, and it is not a mode collapse: the mixture stays fully populated, with
+$\pi$-entropy $1.74$ essentially unchanged from the healthy $1.76$ (both near the
+$\ln 6\!\approx\!1.79$ ceiling). The pathology is instead a \emph{scale
+inflation}---the predicted Laplace scale roughly doubles ($b\!=\!0.93$ vs.\ the
+healthy $\approx\!0.47$), so the student hedges with over-broad, under-committed
+trajectories. This simultaneously degrades geometry (minFDE $3.24$, $2.6\times$
+the healthy value) and full-distribution calibration (mixNLL $63.5$, calibration
+error $0.080$, each roughly double or worse). The healthy from-scratch seeds sit
+in the same low-$b$ band as the distilled runs
+(Fig.~\ref{fig:bscale_seeds}), so the contrast in Table~\ref{tab:collapse16}
+reflects the \emph{basin}, not the presence of the teacher. This is a
+non-converged model, not a sample of the trained-model distribution, and is
+reported in that diagnostic context rather than averaged into
+Table~\ref{tab:seeds16}.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Anatomy of the collapsed from-scratch seed (\texttt{eval.py}, full
+    HiVT-16 validation set). The collapsed no-KD seed is contrasted with the
+    healthy converged band (v2 $\lambda{=}1.0$ mean, $n{=}3$); the healthy
+    from-scratch seeds occupy the same band (Fig.~\ref{fig:bscale_seeds}). The
+    mixture stays fully populated ($\pi$-entropy near the $\ln 6$ ceiling in
+    both), so the failure is \emph{scale inflation}, not mode collapse: $b$
+    roughly doubles, diffusing the predictions and degrading every geometry and
+    calibration metric in concert. Lower is better for all rows except
+    $\pi$-entropy. The ``ratio'' column is collapsed\,$/$\,healthy.}
+  \label{tab:collapse16}
+  \begin{tabular}{lccr}
+    \toprule
+    Metric & Healthy ($n{=}3$) & Collapsed ($n{=}1$) & ratio \\
+    \midrule
+    minADE        & $0.771$  & $1.672$  & $2.2\times$ \\
+    minFDE        & $1.224$  & $3.243$  & $2.6\times$ \\
+    MR            & $0.130$  & $0.458$  & $3.5\times$ \\
+    brier-minFDE  & $1.898$  & $3.903$  & $2.1\times$ \\
+    mixNLL        & $29.4$   & $63.5$   & $2.2\times$ \\
+    calib.\ err   & $0.0229$ & $0.0802$ & $3.5\times$ \\
+    $b$-scale     & $0.465$  & $0.931$  & $2.0\times$ \\
+    $\pi$-entropy & $1.762$  & $1.743$  & $0.99\times$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The pattern across the basin is suggestive. Two full-data routes into it---an
+unlucky from-scratch seed and a $3\times$ larger learning rate ($\eta{=}3\mathrm{e}{-}3$,
+full data)---converge to the \emph{same} $\approx\!3.2$ minFDE,
+$b\!\approx\!0.9$ fingerprint (Figs.~\ref{fig:bscale_seeds},~\ref{fig:brier_seeds}),
+and the head-starved $8$-head configuration degenerates in the same manner on the
+$25\%$ proxy (Section~\ref{ssec:res_heads}, Table~\ref{tab:heads16}); \emph{none}
+of the three v2 ($\lambda{=}1.0$) runs entered it. We are careful not to overstate this.
+With a single collapsed from-scratch seed observed so far (further seeds are still
+in training), the collapse \emph{frequency} is not yet quantified, and the
+``single basin'' reading rests on the failure \emph{coordinates} clustering at one
+characteristic point across these routes rather than on a proof that the optimum
+is topologically unique. What we state is the directional observation: the
+distillation signal appears to act as a \emph{training stabiliser}, the teacher's
+targets supplying a gradient toward the good basin---and specifically toward the
+healthy predictive scale---even from an initialisation that would otherwise strand
+the small student. Quantifying the collapse rate is a natural thread for more
+seeds (Section~\ref{sec:concl_future}).
+
+\paragraph{Why HiVT-32 is not seed-swept.}
+The robustness study above is run at HiVT-16 only, which is a deliberate scoping
+rather than an oversight. The degenerate basin is a \emph{narrow-width}
+pathology: it is reached through configurations that shrink the per-head
+dimension or over-drive the optimiser at $\mathrm{embed}{=}16$, and across all
+HiVT-32 runs in this chapter the from-scratch model trains stably to
+$\approx\!1.16$ minFDE without ever exhibiting the scale-inflated optimum. The
+instability that makes a seed sweep \emph{worth} running therefore manifests at
+$16$, not $32$, and---given that each full-data seed is a $64$-epoch run---seeds
+were concentrated where the variance actually lives. We nonetheless acknowledge
+the asymmetry as a limitation: stability at HiVT-32 is supported by a single
+converged run plus the recipe-selection sweeps of Section~\ref{sec:res_recipe},
+not by a matched multi-seed sample, so it is the weaker, single-sample claim. A
+matched HiVT-32 seed sweep is left to future work
+(Section~\ref{sec:concl_future}).
+
+\begin{figure}[h]
+  \centering
+  \IfFileExists{figures/SEED16_B.png}{%
+    \includegraphics[width=0.68\linewidth]{figures/SEED16_B.png}\\[8pt]
+    \includegraphics[width=0.68\linewidth]{figures/PI_ENTROPY_SEED16.png}%
+  }{%
+    \fbox{\parbox[c][0.30\linewidth][c]{0.9\linewidth}{\centering\itshape
+      Placeholder --- export the HiVT-16 seed-sweep W\&B panels as
+      \texttt{figures/SEED16\_B.png} (mean Laplace scale $b$ vs.\ step) and
+      \texttt{figures/PI\_ENTROPY\_SEED16.png} ($\pi$-entropy vs.\ step), full-data
+      $64$-epoch runs only.}}%
+  }
+  \caption[HiVT-16 seed robustness: scale inflation, not mode collapse.]{HiVT-16
+    multi-seed training dynamics on full data ($64$ epochs), predictive scale and
+    mixture entropy (Weights \& Biases). \textbf{Top:} mean Laplace scale $b$ vs.\
+    step---the runs split into two bands, with the collapsed from-scratch seed and
+    the $\eta=3\times10^{-3}$ full-data route plateauing high
+    ($b\!\approx\!0.9$--$1.0$) while every healthy no-KD seed and all v2
+    distillation runs sit low ($b\!\approx\!0.47$): the scale-inflation signature of
+    Table~\ref{tab:collapse16}. \textbf{Bottom:} mixture-weight ($\pi$) entropy vs.\
+    step, near the $\ln 6\!\approx\!1.79$ ceiling for \emph{every} run, so the
+    failure is not a collapse of the mixing weights (not mode collapse) but purely a
+    scale effect.}
+  \label{fig:bscale_seeds}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \IfFileExists{figures/SEED16_FDE.png}{%
+    \includegraphics[width=0.68\linewidth]{figures/SEED16_FDE.png}\\[8pt]
+    \includegraphics[width=0.68\linewidth]{figures/SEED16_CALLIB.png}%
+  }{%
+    \fbox{\parbox[c][0.30\linewidth][c]{0.9\linewidth}{\centering\itshape
+      Placeholder --- export the HiVT-16 seed-sweep W\&B panels as
+      \texttt{figures/SEED16\_FDE.png} (minFDE vs.\ step) and
+      \texttt{figures/SEED16\_CALLIB.png} (calibration error vs.\ step), full-data
+      $64$-epoch runs only.}}%
+  }
+  \caption[HiVT-16 seed robustness: geometry and calibration.]{HiVT-16 multi-seed
+    training dynamics on full data ($64$ epochs), geometry and calibration
+    (Weights \& Biases), same runs as Figure~\ref{fig:bscale_seeds}. \textbf{Top:}
+    validation minFDE vs.\ step; \textbf{bottom:} calibration error vs.\ step. Both
+    show the same bimodal split---the collapsed from-scratch seed and the
+    $\eta=3\times10^{-3}$ full-data route pile up on the high (degenerate) plateau
+    while the healthy no-KD seeds and all v2 runs converge to the low band: two
+    independent full-data routes into the same $\approx\!3.2$ minFDE,
+    $b\!\approx\!0.9$ basin, which none of the v2 runs enter.}
+  \label{fig:brier_seeds}
+\end{figure}
+
+\clearpage
 \section{The Accuracy--Capacity Frontier}
 \label{sec:res_frontier}
 
@@ -391,7 +729,7 @@ each student up roughly a full size-class at \emph{zero inference cost}.
     \midrule
     HiVT-16            & 45{,}929   & 0.8858 & 1.6053 & 0.1988 & 0.0279 \\
     \textbf{HiVT-16 KD v2} & 45{,}929 & \textbf{0.7762} & \textbf{1.2402} & \textbf{0.1333} & \textbf{0.0265} \\
-    HiVT-32            & 170{,}073  & 0.7361 & 1.1574 & 0.1217 & 0.0325 \\
+    HiVT-32            & 170{,}073  & 0.7361 & 1.1568 & 0.1217 & 0.0325 \\
     \textbf{HiVT-32 KD v2} & 170{,}073 & \textbf{0.6982} & \textbf{1.0505} & \textbf{0.1063} & \textbf{0.0275} \\
     HiVT-64            & 653{,}369  & 0.6869 & 1.0301 & 0.1026 & 0.0416 \\
     HiVT-128 (teacher) & 2{,}559{,}993 & 0.6611 & 0.9692 & 0.0920 & 0.0466 \\
@@ -399,7 +737,7 @@ each student up roughly a full size-class at \emph{zero inference cost}.
   \end{tabular}
 \end{table}
 
-\begin{figure}[htbp]
+\begin{figure}[h]
   \centering
   \includegraphics[width=0.78\linewidth]{figures/accuracy_capacity_frontier.png}
   \caption{Accuracy--capacity frontier (minFDE vs.\ parameters, log scale). The
@@ -501,6 +839,66 @@ on CPU; the GPU pays off only once inputs are batched.
 \section{Qualitative and Diagnostic Analysis}
 \label{sec:res_qual}
 
+\paragraph{Where in the trajectory distillation helps.}
+The headline metrics so far score the entire $3$-second prediction with a single
+number, which hides \emph{where along the trajectory} the distillation gain comes
+from---whether it shaves a little off everywhere or fixes one hard part. To
+resolve this, every prediction is truncated to $1$, $2$, and $3$ seconds and
+re-evaluated at each cut-off, re-selecting the best mode by its final-point error
+each time; the $1$\,s column thus asks ``how good is the near-future prediction''
+on its own, independently of what happens later. Table~\ref{tab:perhorizon}
+reports the result, and two patterns stand out. First, error grows steeply with
+the horizon for \emph{every} model: predicting the next $3$ seconds is several
+times harder than the next $1$, because over a longer window the agent's
+intent---turn, lane-change, brake---has more time to express itself and to
+diverge from a straight-line continuation. Second, and more useful for this
+thesis, \emph{the distillation gain is concentrated in that hard, far-future
+tail}. For HiVT-16 the minFDE improvement rises monotonically with horizon, from
+$-7.8\%$ at $1$\,s, through $-15.0\%$ at $2$\,s, to $-22.6\%$ at $3$\,s; HiVT-32
+shows the same increasing pattern at smaller magnitude
+($-3.3\%\rightarrow-7.6\%\rightarrow-9.2\%$). The reading is intuitive: in the
+first second the from-scratch student is already close to the teacher and has
+little to learn, whereas in the long-horizon tail---exactly where its limited
+capacity leaves it most uncertain---the teacher's guidance is worth most.
+Distillation therefore does not merely subtract a constant error everywhere; it
+specifically repairs the predictions that were worst to begin with.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Per-horizon accuracy on the Argoverse~1 validation split
+    ($n{=}39{,}472$). Each prediction is truncated to $1$/$2$/$3$ seconds and the
+    best mode re-selected by its final-point error at that cut-off, following the
+    convention of Section~\ref{ssec:setup_metrics}. The $\Delta$ rows are the v2
+    distillation gain relative to the matched no-KD baseline. The gain
+    \emph{grows with the horizon}---negligible at $1$\,s, largest at $3$\,s---so
+    distillation helps most in the far-future, high-uncertainty part of the
+    trajectory. The $3$\,s column reproduces
+    Tables~\ref{tab:baselines},~\ref{tab:ab16}, and~\ref{tab:v2_32} up to
+    best-checkpoint rounding. Lower is better.}
+  \label{tab:perhorizon}
+  \begin{tabular}{lrrrrrr}
+    \toprule
+    & \multicolumn{3}{c}{minADE} & \multicolumn{3}{c}{minFDE} \\
+    \cmidrule(lr){2-4}\cmidrule(lr){5-7}
+    Model & 1\,s & 2\,s & 3\,s & 1\,s & 2\,s & 3\,s \\
+    \midrule
+    HiVT-16 (no KD)        & 0.338 & 0.544 & 0.886 & 0.345 & 0.803 & 1.605 \\
+    \textbf{HiVT-16 KD v2} & \textbf{0.317} & \textbf{0.500} & \textbf{0.777}
+                           & \textbf{0.318} & \textbf{0.682} & \textbf{1.243} \\
+    \quad$\Delta$ vs.\ no KD & $-6.3\%$ & $-8.2\%$ & $-12.3\%$
+                             & $-7.8\%$ & $-15.0\%$ & $-22.6\%$ \\
+    \midrule
+    HiVT-32 (no KD)        & 0.305 & 0.478 & 0.736 & 0.299 & 0.642 & 1.157 \\
+    \textbf{HiVT-32 KD v2} & \textbf{0.300} & \textbf{0.461} & \textbf{0.698}
+                           & \textbf{0.289} & \textbf{0.594} & \textbf{1.050} \\
+    \quad$\Delta$ vs.\ no KD & $-1.6\%$ & $-3.5\%$ & $-5.1\%$
+                             & $-3.3\%$ & $-7.6\%$ & $-9.2\%$ \\
+    \midrule
+    HiVT-128 (teacher)     & 0.290 & 0.441 & 0.661 & 0.272 & 0.556 & 0.969 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
 \paragraph{Predicted multimodality.}
 Figure~\ref{fig:traj} shows the six predicted modes for a representative focal
 agent at an intersection, ranked by probability, against the observed history and
@@ -511,7 +909,7 @@ behaviour the mixture output and the best-of-$K$ metrics are designed to capture
 and the structure that the permutation-invariant distillation loss is built to
 transfer.
 
-\begin{figure}[htbp]
+\begin{figure}[h]
   \centering
   \includegraphics[width=\linewidth]{figures/traj_example.png}
   \caption{Qualitative prediction: the $K{=}6$ ranked modes for a focal agent at an
@@ -522,21 +920,145 @@ transfer.
 
 \paragraph{The calibration mechanism, directly.}
 The diagnostics already embedded in the results sections isolate \emph{why} v1 fails
-and v2 succeeds. Across the v1 $\lambda$-sweep the mode-weight entropy is flat while
-the mean scale $b$ falls monotonically (Figure~\ref{fig:lambda32}); under v2 the
-scale instead returns to the student's calibrated width (Table~\ref{tab:v2_32}).
-The over-confidence therefore lives entirely in the per-mode scales, not in the
-mixture weights---precisely the prediction of Section~\ref{ssec:method_calib}, and
-the reason a distribution-matching target (which scores the teacher's spread, not
-just its mean) is the correct fix.
+and v2 succeeds, and they match the analysis of Chapter~\ref{ch:method} point for
+point. Across the v1 $\lambda$-sweep the mode-weight entropy is flat while the mean
+scale $b$ falls monotonically (Figure~\ref{fig:lambda32}); under v2 the scale
+instead returns to the student's calibrated width (Table~\ref{tab:v2_32}). The
+over-confidence therefore lives entirely in the per-mode scales, not in the mixture
+weights---exactly the signature predicted by Proposition~\ref{prop:v1grad}, whose
+stationary-scale formula~\eqref{eq:v1bstar} shows the v1 gradient driving each
+student scale toward the (vanishing) residual to the teacher \emph{means}, with no
+term opposing $b\to0$. Figure~\ref{fig:mechanism} renders the contrast: v1 scores
+each teacher mode as a zero-width point, so the student minimises its loss by piling
+density on that point and collapsing its scale; v2 scores samples spanning the
+teacher's own spread, so the student must stay wide enough to cover them and settles
+at $b_S\approx b^T_f$. This is the same statement as the forward-KL reading of
+Section~\ref{ssec:method_v2}: v2 minimises $\mathrm{KL}(p_T\Vert p_S)$, which is
+mode-covering and so penalises a student too narrow to cover the teacher's mass,
+whereas v1---the zero-variance limit---retains only the teacher's locations. A
+distribution-matching target is thus not a heuristic patch but the fix the theory
+predicts.
+
+\begin{figure}[h]
+  \centering
+  \begin{minipage}{0.48\linewidth}\centering
+  \begin{tikzpicture}[>=Stealth]
+    \draw[->] (-2.2,0) -- (2.4,0) node[right]{\scriptsize position};
+    \draw[->] (0,0) -- (0,2.2) node[above]{\scriptsize density};
+    % teacher as Dirac point target
+    \draw[very thick] (0,0) -- (0,1.95);
+    \fill (0,1.95) circle (1.6pt) node[above right]{\scriptsize $\loc^T_f$ (point)};
+    % student collapses to a narrow tall spike
+    \draw[thick,blue!70!black,smooth] plot coordinates
+      {(-1.0,0)(-0.35,0.10)(-0.13,0.5)(0,1.9)(0.13,0.5)(0.35,0.10)(1.0,0)};
+    \node[blue!70!black] at (1.45,1.4){\scriptsize $p_S$};
+    \node[align=center] at (0,-0.65)
+      {\scriptsize \textbf{v1}: point target\\[-2pt]\scriptsize $b_S\!\to\!0$ (over-confident)};
+  \end{tikzpicture}
+  \end{minipage}\hfill
+  \begin{minipage}{0.48\linewidth}\centering
+  \begin{tikzpicture}[>=Stealth]
+    \draw[->] (-2.4,0) -- (2.6,0) node[right]{\scriptsize position};
+    \draw[->] (0,0) -- (0,2.2) node[above]{\scriptsize density};
+    % teacher Laplace (spread) + samples
+    \draw[thick,gray,smooth] plot coordinates
+      {(-2.0,0)(-1.2,0.18)(-0.6,0.45)(0,1.0)(0.6,0.45)(1.2,0.18)(2.0,0)};
+    \foreach \x in {-1.3,-0.7,-0.2,0.3,0.9,1.5} \fill[gray] (\x,0.07) circle (1.3pt);
+    \node[gray] at (1.7,1.05){\scriptsize $p_T$};
+    % student stays broad to cover the samples
+    \draw[thick,blue!70!black,smooth] plot coordinates
+      {(-2.1,0)(-1.3,0.16)(-0.65,0.42)(0,0.95)(0.65,0.42)(1.3,0.16)(2.1,0)};
+    \node[blue!70!black] at (-1.75,0.95){\scriptsize $p_S$};
+    \node[align=center] at (0,-0.65)
+      {\scriptsize \textbf{v2}: sampled target\\[-2pt]\scriptsize $b_S\!\approx\!b^T_f$ (calibrated)};
+  \end{tikzpicture}
+  \end{minipage}
+  \caption[Why v1 over-sharpens and v2 stays calibrated.]{Mechanism of the
+    calibration difference (schematic, one trajectory coordinate; no data). \textbf{Left
+    (v1):} each teacher mode is scored as a zero-width point $\loc^T_f$, so the
+    student mixture $p_S$ minimises the loss by collapsing its Laplace scale onto
+    that point---the over-confidence of Proposition~\ref{prop:v1grad}. \textbf{Right
+    (v2):} the teacher mode is scored through $S$ samples drawn from its own Laplace
+    $p_T$, so $p_S$ must remain wide enough to cover the spread and settles at the
+    teacher's scale, $b_S\approx b^T_f$---the mode-covering forward KL of
+    Section~\ref{ssec:method_v2}.}
+  \label{fig:mechanism}
+\end{figure}
 
 \paragraph{Mode diversity.}
-The students retain genuine multimodality rather than collapsing onto a single mode
-under distillation: mode-weight entropy is preserved (above) and an offline
-mode-diversity measurement confirms the predicted modes remain geometrically
-distinct. This rules out the most common distillation failure---a student that
-mimics only the teacher's dominant mode---and complements the permutation analysis
-of Section~\ref{ssec:method_perm}, which established that the teacher and student
-modes are mutually unaligned in the first place.
-% TODO(optional): if a mode-diversity figure/number is wanted, generate it with
-% visualisation_other_tests/measure_mode_diversity.py and cite the value here.
+A second classic distillation failure---separate from the scale pathology
+above---is \emph{mode collapse}: a student that, in trying to imitate the teacher,
+quietly abandons its alternative hypotheses and predicts six near-identical
+trajectories, throwing away the very multimodality the mixture exists to provide.
+Two diagnostics show this does not happen here. The mode-weight entropy is
+preserved across the $\lambda$-sweep (above), and Table~\ref{tab:diversity}
+measures the \emph{geometric} spread of the modes directly: for each focal agent
+it takes the distance between the final points of every pair of the $K{=}6$
+predicted modes and averages them (the ``spread'' column), and separately reports
+the fraction of those pairs whose endpoints land within $1$\,m of each
+other---near-duplicates, the ``collapsed'' column. The distilled students keep a
+spread of roughly $5$\,m, essentially the teacher's own value ($5.15$\,m), with
+fewer than $2\%$ of mode pairs collapsed. Distillation does \emph{slightly}
+tighten the spread relative to the from-scratch model (HiVT-16
+$6.37\rightarrow5.45$\,m, HiVT-32 $5.81\rightarrow5.08$\,m), but this is the
+intended behaviour, not a defect: v2 pulls the student's modes toward the
+teacher's more concentrated, more accurate set, so the student's diversity
+\emph{converges toward the teacher's} rather than degenerating toward zero---the
+expected behaviour of the mode-covering forward KL of
+Section~\ref{ssec:method_v2}, which rewards placing mass on every teacher mode
+rather than collapsing onto the dominant one. This
+rules out mode collapse---the most common distillation failure, in which a
+student mimics only the teacher's dominant mode---and complements the permutation
+analysis of Section~\ref{ssec:method_perm}, which established that the teacher and
+student modes are mutually unaligned in the first place.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Focal-agent mode diversity on the Argoverse~1 validation split.
+    ``Spread'' is the mean distance between the final points of every pair of the
+    $K{=}6$ predicted modes (larger $=$ more diverse); ``collapsed'' is the
+    fraction of mode pairs whose endpoints lie within $1$\,m (larger $=$ more
+    near-duplicates). v2 distillation tightens the spread toward the teacher's
+    level without collapsing the mixture: the distilled students stay near the
+    teacher's $5.15$\,m spread, with under $2\%$ of pairs collapsed.}
+  \label{tab:diversity}
+  \begin{tabular}{lrr}
+    \toprule
+    Model & Spread (m) & Collapsed pairs \\
+    \midrule
+    HiVT-16 (no KD)        & 6.37 & 0.004 \\
+    HiVT-16 KD v2          & 5.45 & 0.008 \\
+    HiVT-32 (no KD)        & 5.81 & 0.008 \\
+    HiVT-32 KD v2          & 5.08 & 0.019 \\
+    HiVT-128 (teacher)     & 5.15 & 0.026 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+\paragraph{The calibration split during training.}
+The final-number tables show v1's over-confidence \emph{at convergence};
+Figures~\ref{fig:wandb_dynamics} and~\ref{fig:wandb_dynamics_nll} show it
+\emph{emerging throughout training}, on the four metrics logged for all three
+matched runs. The two geometry panels
+(minFDE, brier-minFDE) confirm that v1 and v2 are indistinguishable and both fall
+below the no-KD baseline: the geometric gain is real and identical across the two
+objectives. Against that fixed geometry, the two likelihood panels split---v1's
+mixture NLL \emph{climbs} above the no-KD baseline (from ${\approx}27$ to
+${\approx}38$) while v2's falls below it (to ${\approx}25$), and the same divergence
+appears on the best-mode regression NLL, where v1 stalls near $-0.19$ while no-KD
+and v2 reach $-0.25$. This is the crux of why mixture NLL diagnoses the
+accuracy--calibration trade-off: NLL rewards a good \emph{location} and a matched
+\emph{scale} at once, so a rising NLL is ambiguous \emph{in isolation}---but here
+the geometry panels rule out a location cause (minFDE is falling in the very same
+runs), leaving scale shrinkage below the residual it should report as the only
+explanation. The over-confidence of Proposition~\ref{prop:v1grad} is thus visible
+\emph{as it happens}, on both the full mixture (mixNLL) and the single best mode
+(reg-loss), rather than inferred only from the endpoint.
+
+
+%python -m KD.kd_mode_permutation_test \
+  % --teacher_ckpt checkpoints/HiVT-128/checkpoints/epoch=63-step=411903.ckpt \
+  % --student_ckpt kd_ckpt/triage-emb32-lr3e-3-kl0.0-full/best/HiVTKD-epoch=54-val_minFDE=1.16.ckpt \
+  % --student_type hivtkd \
+  % --root /home/manya/argoverse --num_scenes 500

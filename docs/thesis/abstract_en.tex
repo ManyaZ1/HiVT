@@ -1,0 +1,55 @@
+% !TEX root = ../main.tex
+% English ABSTRACT.
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+\begin{center}\bfseries \ThesisTitleEN\end{center}
+\noindent\textbf{\StudentEN} \hfill \textbf{Supervisor: \SupervisorEN}\\[10pt]
+
+Motion prediction---forecasting the future trajectories of surrounding vehicles,
+pedestrians and cyclists---is a safety-critical component of the autonomous-driving
+pipeline that must run in real time on embedded hardware. State-of-the-art
+predictors, however, are trained on compute clusters and are too large to run on a
+single consumer GPU, placing both ends of the contemporary pipeline out of reach
+for an individual researcher. This thesis asks how small a competitive trajectory
+predictor can be made before its accuracy degrades, and whether the lost accuracy
+can be recovered through \emph{knowledge distillation} without enlarging the model
+or worsening the calibration a downstream planner depends on.
+
+The study uses HiVT, a transformer-based Laplace-mixture predictor that is small
+enough to be both trained and run on a single GPU, evaluated on the Argoverse~1
+benchmark. The accuracy--capacity trade-off is first characterised by sweeping the
+embedding width (128, 64, 32, 16) and locating the point at which a from-scratch
+student falls measurably below the teacher. The
+\emph{mode-permutation problem} is then identified: because HiVT trains its mixture modes with a
+winner-takes-all loss, the mode slots of two independently trained models do not
+correspond, so any distillation term that aligns modes by index supervises the
+student with self-contradictory targets. To resolve this, a
+permutation-invariant mixture negative-log-likelihood objective is derived that treats the
+teacher's modes as an order-free set of soft targets and supports unequal mode
+counts, with a proof of invariance.
+
+Experiments show that a mean-target variant of this objective recovers roughly
+$84\%$ of the HiVT-32$\to$HiVT-64 capacity gap ($-9.2\%$ \texttt{minFDE} over a
+matched non-distilled baseline) at \emph{zero} added inference cost, but degrades
+full-distribution calibration (mixture NLL $+41\%$, calibration error $5\times$) by
+discarding the teacher's predictive variance. A distribution-matching objective
+that also distils the teacher's per-mode scales removes this penalty entirely,
+leaving the student \emph{better calibrated than both the non-distilled baseline
+and the teacher} while retaining the full geometric gain. The benefit \emph{grows
+as the student shrinks}: at width~16 ($55\times$ smaller than the teacher)
+distribution-matching distillation improves \texttt{minFDE} by
+$-22.7\%$---roughly $2.5\times$ the width-32 gain---recovering $\sim\!81\%$ of the
+width-16$\to$width-32 gap, with calibration improving rather than degrading.
+Distillation thus buys close to a full size-class of accuracy for free, and most
+where capacity is scarcest.
+
+A final efficiency analysis quantifies the deployment frontier: parameter and
+memory savings are fixed and unconditional ($15\times$ at width~32, $55\times$ at
+width~16), whereas the single-scene latency speed-up is far sublinear and
+batch-dependent (on CPU $\sim\!3\times$ online, rising to $\sim\!5.5\times$ under
+modest batching), locating the compression benefit primarily in memory footprint.
+Overall, the answer to how small a competitive HiVT can be made is encouraging:
+with a permutation-invariant, calibration-preserving distillation loss, a
+$55\times$-smaller student reaches roughly the accuracy of an un-distilled model
+four times its size at no calibration cost.
