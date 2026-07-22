@@ -59,8 +59,8 @@ Several limitations bound the claims of this work and motivate the directions be
         the HiVT architecture; generality to other datasets (Argoverse~2,
         nuScenes, Waymo) and other mixture-based predictors is untested.
   \item \textbf{Limited seed counts.} The HiVT-16 A/B is confirmed over multiple
-        seeds (no~KD $n{=}2$, v2 $n{=}3$; Section~\ref{ssec:res_seeds}), where the
-        gain is reproducible and well outside the seed spread, but the HiVT-32 A/Bs
+        seeds (no~KD $n{=}3$, v2 $n{=}3$; Section~\ref{ssec:res_seeds}), where the
+        gain is reproducible and the two seed clouds do not overlap, but the HiVT-32 A/Bs
         remain single training runs. Most effects are far larger than plausible
         run-to-run noise; the smaller calibration differences at HiVT-32 would be
         firmer with seed replication.

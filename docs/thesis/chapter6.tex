@@ -120,8 +120,10 @@ Figure~\ref{fig:lr16} shows the same ranking in the convergence curves.
 
 \begin{table}[htbp]
   \centering
-  \caption{HiVT-16 learning-rate sweep ($25\%$ data, short schedule). $\eta=1\times
-    10^{-3}$ is best on every metric. Lower is better.}
+  \caption{HiVT-16 learning-rate sweep ($25\%$ data, $15$-epoch short schedule,
+    default $8$ heads---the learning rate is fixed \emph{before} the head-count
+    choice of Section~\ref{ssec:res_heads}, so this sweep uses the un-tuned $8$-head
+    architecture). $\eta=1\times10^{-3}$ is best on every metric. Lower is better.}
   \label{tab:lr16}
   \begin{tabular}{lrrrr}
     \toprule
@@ -214,8 +216,14 @@ proxy: geometry degrades \emph{monotonically} as the head dimension shrinks, wit
 minFDE rising from $2.95$ (nh$=2$, head dimension $8$) through $3.25$ (nh$=4$) to
 $3.69$ (nh$=8$, head dimension $2$)---a $25\%$ relative loss---and the best-mode
 regression NLL nearly doubling at nh$=8$, a sign the smallest-head model trains
-poorly. Two heads is clearly best, so HiVT-16 uses $2$ heads for every reported
-result; Figure~\ref{fig:heads16} shows the same monotone degradation in the
+poorly. (This nh$=8$ entry is a \emph{separate} run from the also-$8$-head
+$\eta=1\times10^{-3}$ column of the learning-rate sweep in Table~\ref{tab:lr16},
+which reached $2.91$: the same $8$-head configuration lands at $2.91$ in one run and
+$3.69$ in the other because, with only two channels per head, the $8$-head model
+trains \emph{unstably} and sometimes settles in the poor ${\approx}3.2$--$3.7$ basin
+of Section~\ref{ssec:res_seeds}. The $2$-head model shows no such run-to-run spread,
+a further reason to prefer it.) Two heads is clearly best, so HiVT-16 uses $2$ heads
+for every reported result; Figure~\ref{fig:heads16} shows the same monotone degradation in the
 convergence curves. This mirrors and sharpens the HiVT-32 finding: head count is immaterial
 when the width is ample (HiVT-32) but becomes a real lever once the width is small
 enough that adding heads starves each of dimension (HiVT-16).
@@ -302,7 +310,7 @@ the full-distribution metrics collapse: mixNLL worsens by $43\%$ and the
 calibration error rises more than five-fold, from $0.033$ to $0.184$. The mean scale $b$
 drops $36\%$ ($0.418\to0.268$): the student has been driven well below its own
 calibrated width and is now systematically over-confident, as the reliability
-curves of Figure~\ref{fig:reliability} confirm---the predicted intervals cover far
+curves of Figure~\ref{fig:reliability}(b) confirm---the predicted intervals cover far
 fewer ground-truth points than their nominal probability, and the under-coverage
 worsens monotonically with $\lambda$. The same shrinkage shows in the two final
 rows: the predicted $90\%$ interval now captures only $71.1\%$ of ground-truth
@@ -356,12 +364,22 @@ empirical coverage at $p{=}0.9$.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=0.62\linewidth]{figures/reliability_v1_sweep.png}
-  \caption{Reliability (empirical vs.\ nominal coverage) for HiVT-32 under v1
-    distillation. The no-KD model tracks the diagonal; as $\lambda$ grows the
-    curves bow progressively below it, i.e.\ the predicted intervals are too narrow
-    (over-confident). Coverage data from the $\lambda$-sweep of
-    Figure~\ref{fig:lambda32}.}
+  \includegraphics[width=\linewidth]{figures/reliability_v1_v2.png}
+  \caption[Reliability curves: v1 breaks calibration, v2 does not.]{Reliability
+    (empirical vs.\ nominal coverage) for HiVT-32. \textbf{(a) $\lambda$-sweep,
+    $25\%$ data:} the no-KD model tracks the diagonal; the v1 curves bow
+    progressively below it as $\lambda$ grows, i.e.\ the predicted intervals are
+    too narrow (over-confident), while the v2 curves lie on the no-KD reference at
+    \emph{every} $\lambda$. The pathology is therefore a property of the
+    mean-target objective, not of distillation as such. Same checkpoints as the
+    $\lambda$-sweep of Figure~\ref{fig:lambda32} for v1, plus the matching
+    distribution-matching runs for v2. \textbf{(b) Full data, $\lambda{=}0.5$:} the
+    three models of Tables~\ref{tab:ab32} and~\ref{tab:v2_32}. v1 under-covers at
+    every nominal level (cov@p90 $0.711$ against a nominal $0.90$), whereas v2 is
+    indistinguishable from the from-scratch baseline ($0.909$ vs.\ $0.903$). All
+    curves are full-validation-set evaluations of the named checkpoints
+    (\texttt{KD/eval\_lambda\_sweep.py}; plotted by
+    \texttt{visualisation\_other\_tests/plot\_reliability.py}).}
   \label{fig:reliability}
 \end{figure}
 
@@ -408,8 +426,12 @@ cov@p90 returns to nominal. The mean scale recovers to $0.413$, the student's ow
 calibrated width. (That this exceeds the teacher's $0.358$ is expected and correct:
 a less-accurate student has larger typical error, so honest calibration
 \emph{requires} a wider scale; v1's error was being sharper than even the teacher.)
-v2 thus delivers the full accuracy gain of distillation at zero calibration cost,
-confirming the chapter's central hypothesis on HiVT-32.
+Figure~\ref{fig:reliability}(b) shows the repair directly: the v2 reliability curve
+sits on the from-scratch baseline at every nominal level, exactly where v1's bows
+away. Panel~(a) shows that this is not a property of the chosen operating point---v2
+stays on the diagonal across the whole $\lambda$ range over which v1 degrades
+monotonically. v2 thus delivers the full accuracy gain of distillation at zero
+calibration cost, confirming the chapter's central hypothesis on HiVT-32.
 
 \begin{figure}[htbp]
   \centering
@@ -475,13 +497,24 @@ $\lambda=1.0$---higher than HiVT-32's optimum, consistent with a smaller student
 benefiting from a stronger teacher signal. Geometry improves monotonically up to
 $\lambda=1.0$ (minFDE $-16.4\%$ vs.\ no KD) and then regresses at $\lambda=2.0$.
 Calibration stays intact throughout: mixNLL \emph{improves} with $\lambda$ and the
-scale stays in the healthy band, with none of the v1 collapse.
+scale stays in the healthy band, with none of the v1 collapse. The $\lambda{=}0$
+column here is an \emph{in-harness} no-KD anchor---the identical distillation code
+path with the KD term switched off, on the final $2$-head model---so it is the
+like-for-like baseline for the $\lambda{>}0$ columns. It is a \emph{separate} proxy
+run from the learning-rate and head-count sweeps (Tables~\ref{tab:lr16},~\ref{tab:heads16},
+whose no-KD anchors sit at ${\approx}2.9$ minFDE---the former on the un-tuned $8$-head
+architecture), and reaches a slightly lower minFDE ($2.65$); the three $25\%$ proxies
+are independent selection runs used only for \emph{within-table} ranking, so their
+absolute anchors are not meant to coincide across tables.
 
 \begin{table}[htbp]
   \centering
   \caption{HiVT-16 v2 distillation-weight sweep ($25\%$ data). Geometry bottoms at
     $\lambda{=}1.0$; calibration is preserved throughout. Best geometry per row in
-    bold. Lower is better except $b$-scale (closer to $\approx 0.73$ better).}
+    bold. Lower is better except $b$-scale (closer to the proxy's healthy
+    $\approx 0.73$ is better; this $25\%$/$15$-epoch proxy scale runs \emph{wider}
+    than the converged full-data scale of $\approx 0.47$ in
+    Section~\ref{ssec:res_seeds}, as the Laplace scale sharpens with training).}
   \label{tab:kl16}
   \begin{tabular}{lrrrr}
     \toprule
@@ -542,39 +575,51 @@ The HiVT-16 A/B above (Table~\ref{tab:ab16}) is a single training run per arm. T
 confirm the gain is not an artefact of one lucky initialisation, the baseline and
 the v2 student were each retrained from additional random seeds and re-evaluated
 under the identical recipe; Table~\ref{tab:seeds16} reports the resulting
-mean$\pm$standard deviation. The effect is highly reproducible: on the means
-minFDE falls by $-23.9\%$ ($1.608\to1.224$), with each arm's seed spread roughly
-an order of magnitude smaller than the gap between the arms, and every calibration
-metric again moving the right way (mixNLL $-17.1\%$, calibration error $-20.2\%$).
-The multi-seed means are, if anything, slightly stronger than the single-run
-figures of Table~\ref{tab:ab16}, so none of the chapter's HiVT-16 claims rests on
-a favourable seed.
+mean$\pm$standard deviation over three converged seeds per arm. The effect is
+robust: on the means minFDE falls by $-21.6\%$ ($1.562\to1.224$), and every
+calibration metric again moves the right way (mixNLL $-15.7\%$, calibration error
+$-19.1\%$). The arms are moreover \emph{cleanly separated on every individual
+seed}---the worst v2 run ($1.24$) still beats the best no-KD run ($1.47$) by a wide
+margin, so the two seed clouds do not overlap. What the multi-seed view adds---read
+cautiously, at $n{=}3$ per arm---is that the no-KD arm looks more
+\emph{seed-sensitive}: its three converged seeds span $1.47$--$1.61$ minFDE and a
+fourth collapsed outright (excluded below), whereas all three v2 seeds sit in a tight
+$1.21$--$1.24$ band. We treat this as suggestive rather than settled---three seeds do
+not pin down a variance ratio, and the wide no-KD range is inflated by a single
+unusually good seed ($1.47$). What is \emph{firm} is the separation of the two clouds
+(the nearest pair, v2 $1.24$ vs.\ no-KD $1.47$, differ by $0.23$\,m); what is only
+\emph{suggestive} is that the tighter v2 band points to distillation acting as a mild
+training stabiliser (below)---a reading we do not over-claim from so few seeds. The single-run
+A/B of Table~\ref{tab:ab16} happened to use the default seed, whose no-KD run
+($1.605$) sits near the high (weaker) end of that spread, so its $-22.7\%$ headline
+slightly \emph{overstates} the mean gain; the seed-mean $-21.6\%$ is the more
+conservative figure and remains a large, reproducible gain.
 
 \begin{table}[htbp]
   \centering
   \caption{HiVT-16 multi-seed confirmation (full data, $64$ epochs):
     mean$\pm$sample standard deviation over independent random seeds (no~KD
-    $n{=}2$, v2 $n{=}3$). One further from-scratch seed that collapsed into the
+    $n{=}3$, v2 $n{=}3$). One further from-scratch seed that collapsed into the
     degenerate optimum of Section~\ref{ssec:res_heads} is excluded as
     non-converged (see text); $\Delta$ is computed on the means. Lower is better
     for all rows. The distillation gain is reproducible and lies well outside the
-    seed spread.}
+    seed spread---indeed the two arms do not overlap on any individual seed.}
   \label{tab:seeds16}
   \begin{tabular}{lccr}
     \toprule
-    Metric & no KD ($n{=}2$) & v2, $\lambda{=}1.0$ ($n{=}3$) & $\Delta$ \\
+    Metric & no KD ($n{=}3$) & v2, $\lambda{=}1.0$ ($n{=}3$) & $\Delta$ \\
     \midrule
-    minADE      & $0.887 \pm 0.002$   & $0.771 \pm 0.005$   & $-13.0\%$ \\
-    minFDE      & $1.608 \pm 0.004$   & $1.224 \pm 0.018$   & $-23.9\%$ \\
-    MR          & $0.198 \pm 0.001$   & $0.130 \pm 0.002$   & $-34.2\%$ \\
-    mixNLL      & $35.5 \pm 0.3$      & $29.4 \pm 0.3$      & $-17.1\%$ \\
-    calib.\ err & $0.0287 \pm 0.0011$ & $0.0229 \pm 0.0004$ & $-20.2\%$ \\
+    minADE      & $0.875 \pm 0.021$   & $0.771 \pm 0.005$   & $-11.8\%$ \\
+    minFDE      & $1.562 \pm 0.080$   & $1.224 \pm 0.018$   & $-21.6\%$ \\
+    MR          & $0.189 \pm 0.016$   & $0.130 \pm 0.002$   & $-31.0\%$ \\
+    mixNLL      & $34.9 \pm 1.0$      & $29.4 \pm 0.3$      & $-15.7\%$ \\
+    calib.\ err & $0.0283 \pm 0.0010$ & $0.0229 \pm 0.0004$ & $-19.1\%$ \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 One from-scratch seed is excluded from the means above, and the reason is itself
-informative. Rather than converging to the $\approx\!1.6$ minFDE basin of the
+informative. Rather than converging to the healthy $1.47$--$1.61$ minFDE band of the
 other baseline runs, it collapsed into the degenerate $\approx\!3.2$ optimum
 characterised in Section~\ref{ssec:res_heads}---the same attractor the
 under-dimensioned $8$-head ($\mathrm{head\_dim}{=}2$) and over-large
@@ -631,8 +676,8 @@ $b\!\approx\!0.9$ fingerprint (Figs.~\ref{fig:bscale_seeds},~\ref{fig:brier_seed
 and the head-starved $8$-head configuration degenerates in the same manner on the
 $25\%$ proxy (Section~\ref{ssec:res_heads}, Table~\ref{tab:heads16}); \emph{none}
 of the three v2 ($\lambda{=}1.0$) runs entered it. We are careful not to overstate this.
-With a single collapsed from-scratch seed observed so far (further seeds are still
-in training), the collapse \emph{frequency} is not yet quantified, and the
+With one collapse among the four from-scratch seeds trained so far, the collapse
+\emph{frequency} is only coarsely estimated ($\sim\!1$ in $4$, small-sample), and the
 ``single basin'' reading rests on the failure \emph{coordinates} clustering at one
 characteristic point across these routes rather than on a proof that the optimum
 is topologically unique. What we state is the directional observation: the
