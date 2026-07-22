@@ -12,6 +12,7 @@ wandb/
 # Ignore heavy model outputs/datasets
 *.h5
 teacher_outputs/
+docs/drivex2026_kd.tex
 # Distribution / packaging
 .Python
 build/
