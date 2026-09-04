@@ -1,5 +1,5 @@
 """
-kd_mode_permutation_test.py  —  Thesis Option 2: empirical premise test.
+kd_mode_permutation_test.py  —  Option 2: empirical premise test.
 
 GOAL
 ----
@@ -145,6 +145,12 @@ def main():
     ap.add_argument("--cost", default="fde", choices=["fde", "ade"],
                     help="mode-distance cost: fde=endpoint L2, ade=mean-over-horizon L2")
     ap.add_argument("--out_dir", default=os.path.join(_REPO_ROOT, "KD", "diagnostics"))
+    ap.add_argument("--dump_per_scene", default=None, metavar="PATH.npz",
+                    help="also save the per-scene trace (cost matrices, optimal "
+                         "permutation, greedy nearest, mode geometry) that the "
+                         "aggregate matrices are accumulated from. Lets a "
+                         "downstream consumer replay the accumulation or "
+                         "re-select scenes without re-running inference.")
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -167,12 +173,20 @@ def main():
     cost_optimal_sum = 0.0
     ratio_list = []
     n_used = 0
+    trace = {k: [] for k in ("cost", "perm", "nearest", "identity_optimal",
+                             "cost_identity", "cost_optimal",
+                             "t_loc", "s_loc", "t_probs", "s_probs", "gt")}
 
     for i, data in enumerate(loader):
         if i >= args.num_scenes:
             break
         data = data.to(device)
         t_loc, t_probs = focal_modes(teacher, data)   # [F,H,2], [F]
+        # forward() rotates data.y into the agent-local frame IN PLACE
+        # (models/hivt.py:122), so the ground truth is only correctly rotated
+        # after EXACTLY ONE forward. Read it here, between the two models --
+        # after the student's forward it would be rotated twice.
+        gt = data.y[data.agent_index][0].cpu() if data.y is not None else None
         s_loc, s_probs = focal_modes(student, data)   # [K,H,2], [K]
 
         if F_modes is None:
@@ -219,6 +233,21 @@ def main():
             cost_identity_sum += cost_id
             cost_optimal_sum += cost_op
             ratio_list.append(cost_id / cost_op if cost_op > 1e-9 else float("nan"))
+
+        if args.dump_per_scene:
+            trace["cost"].append(C)
+            trace["nearest"].append(nearest)
+            trace["t_loc"].append(t_loc.numpy())
+            trace["s_loc"].append(s_loc.numpy())
+            trace["t_probs"].append(t_probs.numpy())
+            trace["s_probs"].append(s_probs.numpy())
+            trace["gt"].append(np.full((t_loc.shape[1], 2), np.nan, dtype=np.float32)
+                               if gt is None else gt.numpy())
+            if perms is not None:
+                trace["perm"].append(perm)
+                trace["identity_optimal"].append(np.array_equal(perm, np.arange(K_modes)))
+                trace["cost_identity"].append(cost_id)
+                trace["cost_optimal"].append(cost_op)
 
         n_used += 1
         if n_used % 100 == 0:
@@ -277,6 +306,30 @@ def main():
                    "perm_freq": perm_freq.tolist() if perms is not None else None},
                   f, indent=2)
     print(f"saved numbers -> {json_path}")
+
+    if args.dump_per_scene:
+        os.makedirs(os.path.dirname(os.path.abspath(args.dump_per_scene)) or ".",
+                    exist_ok=True)
+        arrays = {k: np.asarray(v) for k, v in trace.items() if len(v)}
+        np.savez_compressed(
+            args.dump_per_scene,
+            teacher_ckpt=np.array(args.teacher_ckpt),
+            student_ckpt=np.array(args.student_ckpt),
+            cost_kind=np.array(args.cost),
+            **arrays,
+        )
+        # The aggregate matrices must be exactly what the per-scene trace sums
+        # to; if they are not, the trace does not describe this run.
+        if perms is not None:
+            replay = np.zeros_like(perm_freq)
+            for p in arrays["perm"]:
+                replay[np.arange(K_modes), p] += 1
+            assert np.array_equal(replay, perm_freq), \
+                "per-scene trace does not reproduce the aggregate perm_freq"
+            assert int(arrays["identity_optimal"].sum()) == identity_optimal, \
+                "per-scene trace does not reproduce the identity-optimal count"
+        print(f"saved per-scene trace -> {args.dump_per_scene} "
+              f"({n_used} scenes; replay verified against the aggregate)")
 
     # Heatmaps
     try:

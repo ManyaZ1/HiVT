@@ -65,6 +65,9 @@ def main():
     ap.add_argument("--v2", required=True, help="v2 lambda-sweep JSON")
     ap.add_argument("--full", required=True, help="full-data JSON with keys nokd/v1/v2")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--layout", choices=("both", "full"), default="both",
+                    help="both = two panels (thesis, full text width); full = the "
+                         "full-data panel alone, sized for one IEEE column")
     args = ap.parse_args()
 
     with open(args.v1) as f:
@@ -74,7 +77,16 @@ def main():
     with open(args.full) as f:
         full = json.load(f)
 
-    fig, (axL, axR) = plt.subplots(1, 2, figsize=(11.2, 5.2))
+    single = args.layout == "full"
+    if single:
+        # One IEEE column is 3.5 in wide, so draw at 1:1 and keep type >= 8 pt.
+        plt.rcParams.update({"font.size": 8.5, "axes.titlesize": 9,
+                             "axes.labelsize": 8.5, "xtick.labelsize": 8,
+                             "ytick.labelsize": 8})
+        fig, axR = plt.subplots(1, 1, figsize=(3.5, 3.5))
+        axL = None
+    else:
+        fig, (axL, axR) = plt.subplots(1, 2, figsize=(11.2, 5.2))
 
     def baseline(ax, ys, label):
         """no-KD drawn as a wide reference band: the v2 curves land on top of it."""
@@ -82,46 +94,61 @@ def main():
                 zorder=2, label=label)
 
     # ---- left: the lambda dose-response, v1 vs v2 -------------------------------
-    diagonal(axL)
-    baseline(axL, curve(v1["0.0"]), r"no KD ($\lambda=0$, reference)")
-    for shades, tag in ((V1_SHADES, "v1"), (V2_SHADES, "v2")):
-        for lam in ("0.25", "0.5", "1.0"):
-            ls, mk = LAMBDA_STYLE[lam]
-            axL.plot(LEVELS, curve((v1 if tag == "v1" else v2)[lam]), color=shades[lam],
-                     lw=1.9, ls=ls, marker=mk, ms=6, mec="white", mew=0.6, zorder=3,
-                     label=rf"{tag} $\lambda={lam}$")
-    decorate(axL, "(a)  $\\lambda$-sweep (25% data): v1 drifts off, v2 does not")
-    axL.set_ylabel("empirical coverage")
-    axL.legend(fontsize=8.5, loc="upper left", frameon=True, framealpha=0.9,
-               borderpad=0.6, labelspacing=0.35)
-    axL.text(0.97, 0.11, "below the diagonal =\nintervals too narrow\n(over-confident)",
-             fontsize=8.5, color="#5A5A5A", ha="right", va="bottom", linespacing=1.4)
+    if axL is not None:
+        diagonal(axL)
+        baseline(axL, curve(v1["0.0"]), r"no KD ($\lambda=0$, reference)")
+        for shades, tag in ((V1_SHADES, "v1"), (V2_SHADES, "v2")):
+            for lam in ("0.25", "0.5", "1.0"):
+                ls, mk = LAMBDA_STYLE[lam]
+                axL.plot(LEVELS, curve((v1 if tag == "v1" else v2)[lam]), color=shades[lam],
+                         lw=1.9, ls=ls, marker=mk, ms=6, mec="white", mew=0.6, zorder=3,
+                         label=rf"{tag} $\lambda={lam}$")
+        decorate(axL, "(a)  $\\lambda$-sweep (25% data): v1 drifts off, v2 does not")
+        axL.set_ylabel("empirical coverage")
+        axL.legend(fontsize=8.5, loc="upper left", frameon=True, framealpha=0.9,
+                   borderpad=0.6, labelspacing=0.35)
+        axL.text(0.97, 0.11, "below the diagonal =\nintervals too narrow\n(over-confident)",
+                 fontsize=8.5, color="#5A5A5A", ha="right", va="bottom", linespacing=1.4)
 
     # ---- right: the full-data A/B, with cov@p90 labelled directly ---------------
     diagonal(axR)
     baseline(axR, curve(full["nokd"]), "no KD (reference)")
-    series = [("v1", r"v1 (mean-target, $\lambda=0.5$)", V1_SHADES["0.5"], "--", "^"),
-              ("v2", r"v2 (dist-matching, $\lambda=0.5$)", V2_SHADES["0.5"], "-", "o")]
+    series = [("v1", "v1 (mean-target)" if single else r"v1 (mean-target, $\lambda=0.5$)",
+               V1_SHADES["0.5"], "--", "^"),
+              ("v2", "v2 (dist-matching)" if single else r"v2 (dist-matching, $\lambda=0.5$)",
+               V2_SHADES["0.5"], "-", "o")]
     for key, label, color, ls, mk in series:
         axR.plot(LEVELS, curve(full[key]), color=color, lw=2.0, ls=ls, marker=mk,
-                 ms=6, mec="white", mew=0.6, zorder=3, label=label)
-    # Direct cov@p90 labels, stacked so they cannot collide (three series only).
-    for key, tag, dy in (("v2", "v2", 14), ("nokd", "no KD", -15), ("v1", "v1", -14)):
-        y = curve(full[key])[-1]
-        axR.annotate(f"{tag}  {y:.3f}", xy=(0.9, y), xytext=(-9, dy),
-                     textcoords="offset points", ha="right",
-                     va="bottom" if dy > 0 else "top", fontsize=9, color="#3D3D3D")
-    axR.text(0.97, 0.06, "labels: empirical coverage at $p=0.9$ (cov@p90)",
-             fontsize=8.5, color="#5A5A5A", ha="right", va="bottom")
-    decorate(axR, "(b)  Full data, $\\lambda=0.5$: v2 repairs the calibration")
-    axR.legend(fontsize=9, loc="upper left", frameon=True, framealpha=0.9,
-               borderpad=0.6, labelspacing=0.35)
+                 ms=5 if single else 6, mec="white", mew=0.6, zorder=3, label=label)
+    if single:
+        # Print figure: no in-figure title (the caption carries it) and one compact
+        # cov@p90 block in the empty corner below the v1 curve.
+        cov = {k: curve(full[k])[-1] for k in ("nokd", "v1", "v2")}
+        axR.text(0.97, 0.04,
+                 "cov@p90:  no KD %.3f\nv1 %.3f      v2 %.3f"
+                 % (cov["nokd"], cov["v1"], cov["v2"]),
+                 fontsize=7.5, color="#3D3D3D", ha="right", va="bottom",
+                 linespacing=1.5)
+        decorate(axR, "")
+        axR.set_ylabel("empirical coverage")
+    else:
+        # Direct cov@p90 labels, stacked so they cannot collide (three series only).
+        for key, tag, dy in (("v2", "v2", 12), ("nokd", "no KD", -13), ("v1", "v1", -12)):
+            y = curve(full[key])[-1]
+            axR.annotate(f"{tag}  {y:.3f}", xy=(0.9, y), xytext=(-8, dy),
+                         textcoords="offset points", ha="right",
+                         va="bottom" if dy > 0 else "top", fontsize=9, color="#3D3D3D")
+        axR.text(0.97, 0.05, "labels: empirical coverage at $p=0.9$",
+                 fontsize=9, color="#5A5A5A", ha="right", va="bottom")
+        decorate(axR, "(b)  Full data, $\\lambda=0.5$: v2 repairs the calibration")
+    axR.legend(fontsize=7.5 if single else 9, loc="upper left", frameon=True,
+               framealpha=0.9, borderpad=0.5, labelspacing=0.3, handlelength=1.8)
 
     fig.tight_layout()
     out_dir = os.path.dirname(args.out)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    fig.savefig(args.out, dpi=200)
+    fig.savefig(args.out, dpi=300 if single else 200)
     print(f"wrote {args.out}")
 
 

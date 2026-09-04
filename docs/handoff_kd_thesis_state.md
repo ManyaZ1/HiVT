@@ -47,9 +47,13 @@ Nothing is committed yet. `Task #2` (diagnostics) is **done**; its handoff [docs
 - **Env:** `source /home/manya/miniconda3/etc/profile.d/conda.sh && conda activate hivt_new`
 - **Dataset root:** `/home/manya/argoverse`
 - **Teacher cache (verified-good):** `teacher_outputs/train_fix.h5` — use this, NOT `train.h5` (see [[teacher-cache-fixed]]). Stores teacher loc+scale+pi.
-- **Full-data checkpoints** (the headline numbers):
-  - kl=0.0: `kd_ckpt/emb32-bs128-lkl0.0/best/HiVTKD-epoch=46-val_minFDE=1.23.ckpt`
-  - kl=0.5: `kd_ckpt/emb32-bs128-lkl0.5/best/HiVTKD-epoch=62-val_minFDE=1.12.ckpt`
+- **Full-data checkpoints**: ~~kl=0.0 `kd_ckpt/emb32-bs128-lkl0.0/best/HiVTKD-epoch=46-val_minFDE=1.23.ckpt`;
+  kl=0.5 `kd_ckpt/emb32-bs128-lkl0.5/best/HiVTKD-epoch=62-val_minFDE=1.12.ckpt`~~
+  **WRONG — corrected 2026-09-04.** Neither of these reproduces the paper. They are a
+  different run (kl=0.5 there gives calib_err 0.158 / cov@p90 0.753 against the
+  paper's 0.184 / 0.711). The verified paper checkpoints, confirmed by full-val
+  `eval.py` on all seven metrics, are in **[docs/CHECKPOINTS.md](CHECKPOINTS.md)** —
+  use that file, not this line.
 - **Triage λ-sweep checkpoints** (`-cal` family, 25% data, 15 ep, lr=3e-3 — apples-to-apples):
   - `kd_ckpt/triage-emb32-lr3e-3-kl{0.0,0.25,0.5,1.0}-cal/best/` (pick lowest `val_minFDE`).
 - **Author baselines:** `checkpoints/HiVT-{64,128}/...`; standalone `HiVT-32/gxhl2ug9/...epoch=63...`.
