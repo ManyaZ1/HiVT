@@ -33,17 +33,20 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 CAP_SECONDS = 179.0   # 3:00 hard cap, with a second of margin
 CAP_BYTES = 25 * 1024 * 1024
 
-# The timeline. Budget is the design intent; actual is measured after render
-# and reported per shot so drift is visible.
+# The timeline. LIST ORDER is playback order -- the numbers are just shot ids
+# (11 was added after 8 and keeps its id so --shots 11 still selects it).
+# Budget is the design intent; actual is measured after render and reported per
+# shot so drift is visible.
 TIMELINE = [
     (1, 'title', 10.0),
     (2, 'why distillation', 20.0),
-    (3, 'BEAT 1 — mode permutation', 33.4),
+    (3, 'BEAT 1 — mode permutation', 14.0),
     (4, 'the objective', 18.0),
     (5, 'why the mean target breaks calibration', 12.0),
-    (6, 'BEAT 2 — coverage montage', 26.0),
+    (6, 'BEAT 2 — coverage montage', 	35.4),
     (7, 'reliability', 12.0),
     (8, 'results', 29.5),
+    (11, 'deployment footprint', 9.0),
     (9, 'takeaway', 14.0),
     (10, 'reprise', 3.5),
 ]
@@ -67,6 +70,7 @@ def main():
     tr = S.load_perm(args.perm)
     mont = S.load_montage(args.montage)
     rel = S.load_reliability(args.reliability)
+    eff = S.load_efficiency()
 
     # Refuse to build Beat 2 from a montage that does not reproduce the paper's
     # coverage -- a montage off the gate argues for the wrong conclusion.
@@ -89,6 +93,7 @@ def main():
         6: lambda fw: S.shot06_montage(fw, mont),
         7: lambda fw: S.shot07_reliability(fw, rel),
         8: lambda fw: S.shot08_results(fw),
+        11: lambda fw: S.shot11_efficiency(fw, eff),
         9: lambda fw: S.shot09_takeaway(fw),
         10: lambda fw: S.shot10_reprise(fw),
     }

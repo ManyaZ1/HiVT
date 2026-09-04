@@ -351,7 +351,7 @@ way, but the schedule does.
 
 ## 6. The video — BUILT
 
-`docs/video/icra_kd.mp4` — 1280×720, **178.24 s**, **2.43 MB**, H.264/yuv420p.
+`docs/video/icra_kd.mp4` — 1280×720, **177.96 s**, **2.41 MB**, H.264/yuv420p.
 Ten shots, captions burned in, anonymous (no authors, no affiliation, no repo URL).
 
 ### 6.1 Rebuild
@@ -380,15 +380,29 @@ artefacts, so the visuals can be iterated freely.
 | # | Time | Shot |
 |---|---|---|
 | 1 | 0:00 | title (anonymous) |
-| 2 | 0:10 | why distillation: capacity cost, then classifier-vs-mixture |
-| 3 | 0:30 | **BEAT 1** — WTA → the pairing + cost matrix → the matrix over 500 scenes |
-| 4 | 1:03 | why not Hungarian; score under the whole mixture |
-| 5 | 1:21 | v1's scale pathology; "best-of-K cannot see this" |
-| 6 | 1:33 | **BEAT 2** — the 16-scene coverage montage → 0.903 / 0.711 / 0.909 |
+| 2 | 0:10 | capacity cost (frontier), then the slot-mismatch slide: same behaviour, different slot |
+| 3 | 0:30 | **BEAT 1** — one slide: the real cost matrix, index pairing vs optimal, + val-set stats |
+| 4 | 0:44 | same matrix: Hungarian picks one cell per row and flips; ours takes a whole column |
+| 5 | 1:02 | v1's scale pathology; "best-of-K cannot see this" |
+| 6 | 1:14 | **BEAT 2** — the 16-scene coverage montage → 0.903 / 0.711 / 0.909 |
 | 7 | 1:59 | reliability curves |
 | 8 | 2:11 | Table II → HiVT-16 seeds → frontier |
 | 9 | 2:41 | three takeaways + the transfer claim |
 | 10 | 2:55 | anonymous title reprise |
+
+**The cost matrix is the spine of shots 3 and 4.** The three approaches are three
+readings of the same real matrix, which is why they share it: index-aligned is
+the *diagonal*, Hungarian is *one cell per row* (and the flicker shows a fixed
+2.6 m perturbation genuinely moving the optimum from `[0 4 5 2 1 3]` to
+`[2 4 5 0 1 3]`), and ours is *a whole column* — no cell selected at all.
+
+An earlier cut spent 33 s here across three animated sub-shots (winner-takes-all,
+trajectory pairing, the matrix accumulating over 500 scenes). It was reduced to
+14 s and mostly static: the accumulation animation spent 12 s establishing a
+number the caption states in one line, and the trajectory panels were unreadable
+because HiVT-32's modes fan longitudinally (see trap 4 below). The time went to
+the montage, which now holds **2.4 s per scene** instead of 1.35 s — three panels
+of counters and bands is too much to read in under a second and a half.
 
 ### 6.3 Beat 1's data — and why the diagnostic was re-run
 
@@ -452,6 +466,6 @@ systematic, not noise — a stronger statement than "0 % identity-optimal" alone
 ### 6.5 Gates enforced on every build
 
 - montage cov@p90 must be 0.903 / 0.711 / 0.909 / 0.894 → else refuse to render
-- encoded duration ≤ 180 s (currently 178.24, margin 1.76 s)
-- file size ≤ 25 MB (currently 2.43 MB, margin 23.8 MB)
+- encoded duration ≤ 180 s (currently 177.96, margin 2.04 s)
+- file size ≤ 25 MB (currently 2.41 MB, margin 23.8 MB)
 - zero text overflows
