@@ -31,8 +31,8 @@ from KD.video.vstyle import FrameWriter
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 CAP_SECONDS = 179.0   # 3:00 hard cap, with a second of margin
-CAP_BYTES = 25 * 1024 * 1024
-
+CAP_BYTES = 20 * 1024 * 1024   # PaperPlaza: "up to 20MB", per the ICRA 2026
+                               # final-paper-submission instructions (was 25).
 # The timeline. LIST ORDER is playback order -- the numbers are just shot ids
 # (11 was added after 8 and keeps its id so --shots 11 still selects it).
 # Budget is the design intent; actual is measured after render and reported per
@@ -41,14 +41,14 @@ TIMELINE = [
     (1, 'title', 10.0),
     (2, 'why distillation', 20.0),
     (3, 'BEAT 1 — mode permutation', 14.0),
-    (4, 'the objective', 18.0),
+    (4, 'the objective', 12.0),
     (5, 'why the mean target breaks calibration', 12.0),
     (6, 'BEAT 2 — coverage montage', 	35.4),
     (7, 'reliability', 12.0),
     (8, 'results', 29.5),
     (11, 'deployment footprint', 9.0),
-    (9, 'takeaway', 14.0),
-    (10, 'reprise', 3.5),
+    (9, 'takeaway', 15.0),
+   # (10, 'reprise', 3.5),
 ]
 
 
@@ -88,7 +88,7 @@ def main():
         1: lambda fw: S.shot01_title(fw),
         2: lambda fw: S.shot02_why_kd(fw),
         3: lambda fw: S.shot03_permutation(fw, tr),
-        4: lambda fw: S.shot04_objective(fw, tr),
+        4: lambda fw: S.shot04_objective(fw),
         5: lambda fw: S.shot05_pathology(fw),
         6: lambda fw: S.shot06_montage(fw, mont),
         7: lambda fw: S.shot07_reliability(fw, rel),
@@ -162,7 +162,8 @@ def main():
         assert encoded <= 180.0, \
             f'ENCODED DURATION OVER THE ICRA CAP: {encoded:.2f}s > 180s'
         print(f'  OK: under the 180 s cap by {180.0 - encoded:.2f} s, '
-              f'under the 25 MB limit by {(CAP_BYTES - size) / 1e6:.1f} MB')
+              f'under the {CAP_BYTES // (1024 * 1024)} MB limit by '
+              f'{(CAP_BYTES - size) / 1e6:.1f} MB')
 
 
 if __name__ == '__main__':

@@ -301,7 +301,7 @@ def shot02_why_kd(fw):
 
     def slots(stage):
         fig = new_frame()
-        title(fig, 'Both models learn the same behaviours — in a different order')
+        title(fig, 'Both models learn the same behaviours but in different slots')
         ax = fig.add_axes([0.08, 0.235, 0.84, 0.56])
         bare(ax)
         ax.set_xlim(0, 1)
@@ -344,16 +344,14 @@ def shot02_why_kd(fw):
         legend_chips(fig, chips, y=0.185, gap=0.20)
 
         if stage == 0:
-            caption(fig, ['Distillation recovers that gap for free — a training-time loss only, '
-                          'with the teacher cached offline.',
-                          'But both models were trained winner-takes-all, so nothing ever fixed '
-                          'which slot holds which behaviour.'])
+            caption(fig, ['HiVT models are trained with winner-takes-all loss.'],
+                           highlight='Nothing defines which slot holds which behaviour.')
         elif stage == 1:
             caption(fig, ['Standard KD pairs teacher slot k with student slot k.'],
-                    highlight='It is matching “turn left” against “go straight”.')
+                    highlight='It matches different behaviours by index, not by meaning.')
         else:
-            caption(fig, ['The same behaviour is there — it just lives in a different slot.'],
-                    highlight='Match by meaning, not by index.')
+            caption(fig, ['The same behaviour lives in a different slot in each model.'],
+                    highlight='Goal: match by meaning.')
         return fig
 
     fw.add(slots(0), 3.4)
@@ -365,91 +363,90 @@ def shot02_why_kd(fw):
 # 3. BEAT 1 — the mode-permutation problem  (34 s)
 # --------------------------------------------------------------------------- #
 def shot03_permutation(fw, tr):
-    """One slide. The real per-scene cost matrix -- the matrix a Hungarian
-    matcher would actually be handed -- with the identity pairing and the
-    optimal pairing marked on it, and the validation-set statistics beside it.
+    """One slide: the aggregate assignment matrix (the paper's Fig. 2), rebuilt
+    from the per-scene trace so it is real counts rather than a re-rendered PNG,
+    with a short explanation beside it.
 
-    Earlier this was three animated sub-shots (winner-takes-all, the pairing,
-    the matrix accumulating over 500 scenes). The accumulation animation was
-    cut: it spent 12 s establishing a number the caption states in one line,
-    and the conceptual setup now happens in shot 2b.
+    Cell (i, j) counts the validation scenes whose optimal one-to-one pairing
+    matched teacher mode j to student mode i. The mass lands on a consistent
+    NON-identity permutation, and never once on the identity -- which is the
+    whole claim, visible in one picture.
+
+    Rendered in the palette's sequential blue rather than the paper's viridis
+    (one hue, light->dark; magnitude is a magnitude) and with no colourbar,
+    since every cell is already labelled with its count.
     """
     import collections
 
-    sc, modal = pick_perm_scene(tr)
-    C = tr['cost'][sc]
-    ci, co = float(tr['cost_identity'][sc]), float(tr['cost_optimal'][sc])
-
     perm = tr['perm']
     n = len(perm)
+    M = np.zeros((6, 6), dtype=int)
+    for pmt in perm:
+        M[np.arange(6), pmt] += 1
+
     n_identity = int(sum(tuple(p) == tuple(range(6)) for p in perm))
-    modal_share = collections.Counter(map(tuple, perm)).most_common(1)[0][1] / n
+    modal, modal_n = collections.Counter(map(tuple, perm)).most_common(1)[0]
+    n_distinct = len(collections.Counter(map(tuple, perm)))
     mean_id = float(tr['cost_identity'].mean())
     mean_opt = float(tr['cost_optimal'].mean())
     ratio = float((tr['cost_identity'] / tr['cost_optimal']).mean())
 
     def frame(stage):
         fig = new_frame()
-        title(fig, 'The pairing standard KD assumes is never the right one')
+        title(fig, 'Teacher and student number their modes in unrelated orders')
 
-        axm = fig.add_axes([0.075, 0.275, 0.34, 0.50])
-        axm.set_facecolor(SURFACE)
-        axm.imshow(C, cmap=CMAP_BLUE, zorder=1)
-        axm.set_xticks(range(6))
-        axm.set_yticks(range(6))
-        axm.tick_params(colors=INK_2, labelsize=10.5, length=0)
-        axm.set_xlabel('teacher mode', fontsize=12.5, color=INK_2, labelpad=6)
-        axm.set_ylabel('student mode', fontsize=12.5, color=INK_2, labelpad=6)
-        axm.set_title('teacher/student mode distance  (m)', fontsize=12.5,
-                      color=INK_2, pad=10)
-        for sp in axm.spines.values():
+        ax = fig.add_axes([0.065, 0.265, 0.35, 0.52])
+        ax.set_facecolor(SURFACE)
+        ax.imshow(M, cmap=CMAP_BLUE, vmin=0, vmax=M.max(), zorder=1)
+        ax.set_xticks(range(6))
+        ax.set_yticks(range(6))
+        ax.tick_params(colors=INK_2, labelsize=11, length=0)
+        ax.set_xlabel('teacher mode index', fontsize=12.5, color=INK_2, labelpad=7)
+        ax.set_ylabel('student mode index', fontsize=12.5, color=INK_2, labelpad=7)
+        for sp in ax.spines.values():
             sp.set_color(HAIRLINE)
-        for (r, c_) in np.ndindex(C.shape):
-            axm.text(c_, r, f'{C[r, c_]:.0f}', ha='center', va='center',
-                     fontsize=10, zorder=3,
-                     color='white' if C[r, c_] > 0.55 * C.max() else INK_2)
-        for k in range(6):
-            axm.add_patch(plt.Rectangle((k - .5, k - .5), 1, 1, fill=False,
-                                        ec=INK, lw=2.2, zorder=4))
+        for (r, c) in np.ndindex(M.shape):
+            if M[r, c]:
+                ax.text(c, r, str(M[r, c]), ha='center', va='center', fontsize=10.5,
+                        zorder=3, color='white' if M[r, c] > 0.55 * M.max() else INK_2)
         if stage >= 1:
-            for k, f in enumerate(modal):
-                axm.add_patch(plt.Rectangle((int(f) - .5, k - .5), 1, 1, fill=False,
-                                            ec=AQUA, lw=2.8, zorder=5))
+            for k in range(6):
+                ax.add_patch(plt.Rectangle((k - .5, k - .5), 1, 1, fill=False,
+                                           ec=ORANGE, lw=2.2, ls=(0, (4, 2)), zorder=5))
+            ax.text(0.5, 1.04, 'dashed = the identity pairing', transform=ax.transAxes,
+                    ha='center', fontsize=11.5, color=ORANGE)
 
         x = 0.50
-        fig.text(x, 0.735, 'on this scene', fontsize=12.5, color=INK_3, ha='left')
-        fig.text(x, 0.665, 'pairing by index', fontsize=14, color=INK_2, ha='left')
-        fig.text(0.945, 0.665, f'{ci:.2f} m', fontsize=20, color=INK, ha='right',
-                 fontweight='semibold')
+        fig.text(x, 0.735,
+                 f'For each of {n} validation scenes we solve for the\n'
+                 'best one-to-one pairing of the two models’ modes.',
+                 fontsize=14, color=INK, ha='left', va='top', linespacing=1.7)
+        fig.text(x, 0.615,
+                 'Each cell counts how often teacher mode j\nwas matched to student mode i.',
+                 fontsize=13, color=INK_2, ha='left', va='top', linespacing=1.7)
+
         if stage >= 1:
-            fig.text(x, 0.585, 'optimal pairing', fontsize=14, color=INK_2, ha='left')
-            fig.text(0.945, 0.585, f'{co:.2f} m', fontsize=20, color=AQUA, ha='right',
-                     fontweight='semibold')
             fig.add_artist(plt.Line2D([x, 0.945], [0.525, 0.525], color=HAIRLINE,
                                       lw=1.0, transform=fig.transFigure))
-            fig.text(x, 0.465, f'over {n} validation scenes', fontsize=12.5,
-                     color=INK_3, ha='left')
             rows = [
-                ('identity pairing optimal in', f'{n_identity} scenes'),
-                ('one non-identity permutation', f'{modal_share * 100:.1f}%'),
+                ('identity pairing optimal in', f'{n_identity} of {n}'),
+                ('one permutation accounts for', f'{modal_n / n * 100:.1f}%'),
+                ('distinct permutations seen', f'{n_distinct} of 720'),
                 ('mean distance, index vs optimal', f'{mean_id:.2f} → {mean_opt:.2f} m'),
                 ('index pairing is worse by', f'{ratio:.2f}×'),
             ]
             for i, (lab, val) in enumerate(rows):
-                y = 0.395 - i * 0.062
+                y = 0.455 - i * 0.060
                 fig.text(x, y, lab, fontsize=13, color=INK_2, ha='left')
                 fig.text(0.945, y, val, fontsize=13.5, color=INK, ha='right',
                          fontweight='semibold')
 
-        legend_chips(fig, [(INK, 'paired by index'), (AQUA, 'optimal pairing')]
-                     if stage >= 1 else [(INK, 'paired by index')], y=0.195, gap=0.22)
-
         if stage == 0:
-            caption(fig, ['Index-aligned KD reads straight down the diagonal — and picks some '
-                          'of the worst cells in the matrix.'])
+            caption(fig, ['If the two models agreed on an ordering, the mass would sit on the '
+                          'diagonal.'])
         else:
-            caption(fig, ['Solving the assignment properly gives a different permutation on '
-                          'essentially every scene.'],
+            caption(fig, ['It sits on a consistent permutation instead — and never once on the '
+                          'diagonal.'],
                     highlight='The identity pairing is optimal in 0% of 500 validation scenes.')
         return fig
 
@@ -460,106 +457,140 @@ def shot03_permutation(fw, tr):
 # --------------------------------------------------------------------------- #
 # 4. The fix  (18 s)
 # --------------------------------------------------------------------------- #
-def shot04_objective(fw, tr):
-    """Both halves argue on the SAME cost matrix shot 3 introduced, because the
-    three approaches are three different readings of it:
+def shot04_objective(fw):
+    """The objective, argued on the SAME slot cartoon shot 2b introduced.
 
-        index-aligned   -> the diagonal cells
-        Hungarian       -> one cell per row, and it moves as training moves
-        ours            -> a whole column: no cell is ever selected
+    This shot used to run on the cost matrix: a Hungarian beat whose assignment
+    "flipped" between two near-identical 6x6 heatmaps, then the objective drawn
+    as a highlighted column. Both were cut. The flip was carried entirely by
+    thin rectangles relocating among 36 cells in half a second -- the viewer
+    learned it by reading the sentence, not by seeing it -- and by then the
+    video had spent 32 consecutive seconds on blue heatmaps. The Hungarian
+    argument is a reviewer's objection, not a viewer's question, so it survives
+    here as one caption line.
 
-    That last reading is what "never forms a pairing" looks like, and it is far
-    clearer on the matrix than on the trajectories (whose modes fan
-    longitudinally and render as an unreadable streak -- see pick_perm_scene).
+    The cartoon can do something the matrix cannot: SHOW permutation
+    invariance. Stage 2 relabels the student's modes, the weights follow their
+    boxes, and the loss value on screen does not move. That is the whole
+    Property-1 claim in one cut.
+
+    The weights are schematic (labelled as such on the frame). Real
+    responsibilities r_{f->k} need the student's per-step scales b^S, which the
+    perm trace does not carry; inventing a plausible-looking b to compute
+    "real" numbers would be worse than an honest cartoon. Everything numeric
+    elsewhere in this video is read from a file or a paper table -- this frame
+    is the one deliberate exception and it says so on screen.
     """
-    sc, modal = pick_perm_scene(tr)
-    C = tr['cost'][sc]
+    # Same three behaviours, same slot assignment, as shot02b -- the viewer has
+    # already learned this layout, so the shot reads as its continuation.
+    TEACHER = [('mode 1', 'turn left'), ('mode 2', 'go straight'), ('mode 3', 'turn right')]
+    F_STAR = 0                       # the teacher mode being scored: 'turn left'
 
-    # Two training steps: the student's modes shift slightly, so the cost matrix
-    # shifts and the argmin genuinely lands on a different permutation. The
-    # perturbation is fixed, not random, so the build stays reproducible.
-    nudge = np.zeros_like(C)
-    nudge[0, 0] = nudge[3, 2] = 2.6
-    STEPS = [(C, _best_perm(C)), (C + nudge, _best_perm(C + nudge))]
+    # Slot names stay pinned to their row; the BEHAVIOUR and its weight move.
+    # That is what "reordering the student's modes" means -- a relabelling.
+    STUDENT_A = [('mode 1', 'go straight', 0.03),
+                 ('mode 2', 'turn right', 0.07),
+                 ('mode 3', 'turn left', 0.90)]
+    STUDENT_B = [('mode 1', 'turn left', 0.90),
+                 ('mode 2', 'go straight', 0.03),
+                 ('mode 3', 'turn right', 0.07)]
+    L_VALUE = 0.40                   # -log of the (unnormalised) weight sum; a
+                                     # sum over the same terms either way, so it
+                                     # is identical under the relabelling.
 
-    def matrix_axes(fig, mat):
-        ax = fig.add_axes([0.075, 0.275, 0.34, 0.50])
-        ax.set_facecolor(SURFACE)
-        ax.imshow(mat, cmap=CMAP_BLUE, vmin=C.min(), vmax=C.max(), zorder=1)
-        ax.set_xticks(range(6))
-        ax.set_yticks(range(6))
-        ax.tick_params(colors=INK_2, labelsize=10.5, length=0)
-        ax.set_xlabel('teacher mode', fontsize=12.5, color=INK_2, labelpad=6)
-        ax.set_ylabel('student mode', fontsize=12.5, color=INK_2, labelpad=6)
-        ax.set_title('teacher/student mode distance  (m)', fontsize=12.5,
-                     color=INK_2, pad=10)
-        for sp in ax.spines.values():
-            sp.set_color(HAIRLINE)
-        for (r, c_) in np.ndindex(mat.shape):
-            ax.text(c_, r, f'{mat[r, c_]:.0f}', ha='center', va='center',
-                    fontsize=10, zorder=3,
-                    color='white' if mat[r, c_] > 0.55 * C.max() else INK_2)
+    ROW_Y = [0.82, 0.50, 0.18]
+    BOX_H, LX, RX, BW = 0.22, 0.0, 0.58, 0.30
+
+    def cartoon(fig, student, arrows):
+        ax = fig.add_axes([0.055, 0.235, 0.40, 0.55])
+        bare(ax)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.text(LX + BW / 2, 1.05, 'Teacher', fontsize=13, color=ORANGE,
+                ha='center', va='bottom', fontweight='semibold')
+        ax.text(RX + BW / 2, 1.05, 'Student', fontsize=13, color=BLUE,
+                ha='center', va='bottom', fontweight='semibold')
+
+        for r, (slot, behaviour) in enumerate(TEACHER):
+            # only the mode being scored is at full strength; the objective
+            # sums over all of them, one at a time.
+            a = 1.0 if r == F_STAR else 0.26
+            ax.add_patch(plt.Rectangle((LX, ROW_Y[r] - BOX_H / 2), BW, BOX_H,
+                                       facecolor=ORANGE, alpha=a, edgecolor='none',
+                                       zorder=3))
+            ax.text(LX + BW / 2, ROW_Y[r] + 0.038, slot, fontsize=12, color='white',
+                    alpha=a, ha='center', va='center', fontweight='bold', zorder=4)
+            ax.text(LX + BW / 2, ROW_Y[r] - 0.040, behaviour, fontsize=11.5,
+                    color='white', alpha=a, ha='center', va='center', zorder=4)
+
+        for r, (slot, behaviour, w) in enumerate(student):
+            ax.add_patch(plt.Rectangle((RX, ROW_Y[r] - BOX_H / 2), BW, BOX_H,
+                                       facecolor=BLUE, edgecolor='none', zorder=3))
+            ax.text(RX + BW / 2, ROW_Y[r] + 0.038, slot, fontsize=12, color='white',
+                    ha='center', va='center', fontweight='bold', zorder=4)
+            ax.text(RX + BW / 2, ROW_Y[r] - 0.040, behaviour, fontsize=11.5,
+                    color='white', ha='center', va='center', zorder=4)
+            if arrows:
+                # every student mode is connected, weighted by how well it
+                # explains this teacher mode. Nothing is ever selected.
+                ax.annotate('', xy=(RX - 0.008, ROW_Y[r]),
+                            xytext=(LX + BW + 0.008, ROW_Y[F_STAR]),
+                            arrowprops=dict(arrowstyle='-|>', color=AQUA,
+                                            lw=1.0 + 5.0 * w, shrinkA=0, shrinkB=0))
+                ax.text(RX + BW + 0.035, ROW_Y[r], f'{w:.2f}', fontsize=11.5,
+                        color=INK, ha='left', va='center', fontweight='semibold')
         return ax
 
-    # --- 4a: why not Hungarian (7 s) ---------------------------------------
-    def hungarian(which):
-        mat, perm = STEPS[which % 2]
-        fig = new_frame()
-        title(fig, 'Why not just solve the assignment problem?')
-        ax = matrix_axes(fig, mat)
-        for k, f in enumerate(perm):
-            ax.add_patch(plt.Rectangle((int(f) - .5, k - .5), 1, 1, fill=False,
-                                       ec=INK, lw=2.8, zorder=5))
-        fig.text(0.50, 0.665, f'training step {2100 + which % 2}', fontsize=15,
-                 color=INK_3, ha='left')
-        fig.text(0.50, 0.575, 'chosen permutation', fontsize=13.5, color=INK_2, ha='left')
-        fig.text(0.50, 0.495, '  '.join(str(int(f)) for f in perm), fontsize=25,
-                 color=INK, ha='left', fontweight='semibold')
-        fig.text(0.50, 0.395, 'the student’s modes move a little,\nand the argmin jumps to a\n'
-                              'different assignment entirely.',
-                 fontsize=13, color=INK_2, ha='left', va='top', linespacing=1.7)
-        legend_chips(fig, [(INK, 'the assignment chosen this step')], y=0.195)
-        caption(fig, ['Hungarian matching re-solves a hard, non-differentiable assignment '
-                      'every step, and is undefined when the two models have different mode '
-                      'counts.'],
-                highlight='The pairing also flips discontinuously between steps.')
-        return fig
-
-    for i in range(6):
-        fw.add(hungarian(i), 0.55)
-    fw.add(hungarian(0), 3.7)
-
-    # --- 4b: score against the whole mixture (11 s) ------------------------
-    f_star = int(np.argmax(tr['t_probs'][sc]))
-
-    def mixture(stage):
+    def frame(stage):
+        student = STUDENT_B if stage >= 2 else STUDENT_A
         fig = new_frame()
         title(fig, 'Our objective never forms a pairing at all')
-        ax = matrix_axes(fig, C)
-        if stage >= 1:
-            # a whole column: teacher mode f is scored against EVERY student mode
-            ax.add_patch(plt.Rectangle((f_star - .5, -.5), 1, 6, fill=False,
-                                       ec=AQUA, lw=3.0, zorder=5))
-        fig.text(0.50, 0.700, 'score each teacher mode under the\nstudent’s ENTIRE mixture density',
-                 fontsize=15, color=INK, ha='left', va='center', linespacing=1.6)
-        fig.text(0.50, 0.545,
+        cartoon(fig, student, arrows=stage >= 1)
+        # Footnoted at the far end of the chip row: the one frame in this video
+        # whose numbers are illustrative rather than read from a file.
+        fig.text(0.945, 0.185, 'weights schematic', fontsize=10.5, color=INK_3,
+                 ha='right', va='center')
+
+        fig.text(0.52, 0.745, 'Score each teacher mode under the\n'
+                              'student’s ENTIRE mixture density.',
+                 fontsize=15, color=INK, ha='left', va='top', linespacing=1.6)
+        fig.text(0.52, 0.595,
                  r'$\mathcal{L} = -\sum_f \pi^T_f \, \log \sum_k \pi^S_k \, '
                  r'\mathrm{Lap}\left(\mu^T_f \mid \mu^S_k,\, b^S_k\right)$',
                  fontsize=18, color=INK, ha='left', va='center')
         if stage >= 1:
-            fig.text(0.50, 0.395, 'No cell is ever selected. Every student mode\n'
-                                  'contributes, weighted by how well it explains\n'
-                                  'the teacher mode — by value, never by index.',
+            fig.text(0.52, 0.485, 'Every student mode contributes, weighted by\n'
+                                  'how well it explains the teacher mode —\n'
+                                  'by value, never by index.',
                      fontsize=13, color=INK_2, ha='left', va='top', linespacing=1.7)
-        legend_chips(fig, [(AQUA, 'one teacher mode vs the whole student mixture')]
-                     if stage >= 1 else [], y=0.195)
-        caption(fig, ['The student enters only through its mixture density, so reordering '
-                      'either model’s modes changes nothing.'],
-                highlight='Permutation-invariant by construction — and defined for any mode counts.')
+            fig.text(0.52, 0.285, 'loss for this teacher mode', fontsize=12.5,
+                     color=INK_3, ha='left', va='center')
+            fig.text(0.52, 0.225, f'{L_VALUE:.2f}', fontsize=30, color=INK,
+                     ha='left', va='center', fontweight='semibold')
+        if stage >= 2:
+            fig.text(0.755, 0.225, 'unchanged', fontsize=14, color=AQUA,
+                     ha='left', va='center', fontweight='semibold')
+
+        chips = [(AQUA, 'one teacher mode vs the whole student mixture')] if stage >= 1 else []
+        legend_chips(fig, chips, y=0.185)
+
+        if stage == 0:
+            caption(fig, 'Take one teacher mode. An index-aligned loss would hand it the '
+                         'student slot with the same number.')
+        elif stage == 1:
+            caption(fig, ['The log-sum-exp is a smooth maximum: the student mode that fits '
+                          'dominates, but none is ever hard-selected.'],
+                    highlight='No assignment to solve, none to flip between steps, none to '
+                              'break when the mode counts differ.')
+        else:
+            caption(fig, ['Relabel the student’s modes: the weights follow the behaviours, '
+                          'and the loss does not move.'],
+                    highlight='Permutation-invariant by construction — and defined for any mode counts.')
         return fig
 
-    fw.add(mixture(0), 3.6)
-    fw.add(mixture(1), 7.4)
+    fw.add(frame(0), 3.4)
+    fw.add(frame(1), 4.6)
+    fw.add(frame(2), 4.0)
 
 
 # --------------------------------------------------------------------------- #
@@ -779,7 +810,7 @@ def shot08_results(fw):
     # --- 8a: Table II (12 s) -----------------------------------------------
     def table2(stage):
         fig = new_frame()
-        title(fig, 'HiVT-32, λ = 0.5 — same geometry, opposite honesty')
+        title(fig, 'HiVT-32, λ = 0.5: same accuracy, better calibration')
         ax = _table_axes(fig, [0.16, 0.20, 0.70, 0.63])
         x0, dx = 0.34, 0.185
         _table_header(ax, ['no KD', 'v1', 'v2', 'teacher'], x0, dx, 0.95)
@@ -903,41 +934,43 @@ def shot08_results(fw):
 # 9. Takeaway  (14 s)  + 10. anonymous reprise (4 s)
 # --------------------------------------------------------------------------- #
 def shot09_takeaway(fw):
+    # Every line carries the number that backs it. An abstract takeaway is a
+    # restatement of the method; the number is what a viewer repeats to someone
+    # else. Sources: shot 3 (perm trace), Table II, Table III, Table I.
     lines = [
-        (BLUE, 'Diagnosis: index-aligned KD is ill-posed \n',
-         'Winner-takes-all training leaves the ordering arbitrary \n'
-         '(identity pairing is optimal in 0% of scenes)'),
-        (ORANGE, 'A permutation-invariant, matching-free mixture objective corrects it',
-        ),
-        (AQUA, 'The output distributions should be matched, not the means.\n'
-        'v1 breaks calibration by scale shrinkage \n'
-         'v2 = forward mode-covering KL fixes it'),
-         ( INK, 'Distillation recovers most of a size class at no inference cost \n')
+        (BLUE, 'Index-aligned KD is ill-posed',
+         'Winner-takes-all leaves the mode ordering arbitrary — the identity pairing is\n'
+         'the optimal one in 0 of 500 validation scenes.'),
+        (ORANGE, 'Matching means instead of distributions breaks calibration',
+         'v1 ties v2 on every geometric metric (minFDE 1.050) — and its nominal 90%\n'
+         'intervals cover 71%. Calibration error 0.033 → 0.184.'),
+        (AQUA, 'v2, the Monte-Carlo forward KL, repairs it at zero inference cost',
+         'HiVT-16, 3 seeds: minFDE −21.6%, miss rate −31.0%, calibration error −19.1%.\n'
+         'A training-time loss term only; the student stays an ordinary HiVT.'),
+        (INK, 'That buys back most of a size class',
+         'HiVT-32 + v2 reaches 1.050 minFDE — within 2% of a from-scratch HiVT-64 that\n'
+         'carries 3.8× the parameters. The student is 46 k–170 k, the teacher 2.56 M.'),
     ]
 
     def frame(n):
         fig = new_frame()
         title(fig, 'Takeaway', y=0.90, size=22)
-        y = 0.73
+        y = 0.76
         for i in range(n):
-            # entries may be (colour, head) or (colour, head, body); a
-            # head-only entry carrying newlines is split so its first line is
-            # the heading and the rest reads as body, matching the others.
-            color, head, body = (tuple(lines[i]) + ('',))[:3]
-            if not body.strip() and '\n' in head.strip():
-                head, _, body = head.strip().partition('\n')
-            fig.patches.append(plt.Rectangle((0.055, y - 0.055), 0.006, 0.095,
+            color, head, body = lines[i]
+            # The rule spans head AND body, so each claim reads as one block and
+            # a body line is never mistaken for the next claim's opener.
+            fig.patches.append(plt.Rectangle((0.055, y - 0.078), 0.006, 0.118,
                                              transform=fig.transFigure,
                                              facecolor=color, edgecolor='none'))
             fig.text(0.085, y + 0.020, head.strip(), fontsize=16, color=INK,
                      fontweight='semibold', ha='left', va='center')
-            if body.strip():
-                fig.text(0.085, y - 0.040, body.strip(), fontsize=12.5, color=INK_2,
-                         ha='left', va='top', linespacing=1.55)
-            y -= 0.16
+            fig.text(0.085, y - 0.040, body.strip(), fontsize=12.5, color=INK_2,
+                     ha='left', va='top', linespacing=1.55)
+            y -= 0.175
         return fig
 
-    for i, hold in enumerate((3.0, 3.0, 3.0, 5.0)):
+    for i, hold in enumerate((3.2, 3.4, 3.4, 5.0)):
         fw.add(frame(i + 1), hold)
 
 
