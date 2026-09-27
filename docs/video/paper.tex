@@ -1,0 +1,730 @@
+%% IEEE ICRA 2027 -- contributed paper submission (double-anonymous review)
+%% ICRA double-column format: IEEEtran conference class, US Letter, 10pt.
+%% SUBMISSION VERSION: author names, affiliations and acknowledgements are
+%% withheld per the IEEE RAS double-anonymous review rules. Restore them
+%% only in the camera-ready version.
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{amsthm}
+\newtheorem{prop}{Proposition}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,allcolors=blue]{hyperref}
+% Keep author identity out of the PDF document-information dictionary.
+\hypersetup{pdfauthor={},pdfsubject={},pdfkeywords={},pdfcreator={}}
+
+% --- convenience macros (match the thesis notation) -------------------------
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Lap}{\mathrm{Laplace}}
+\newcommand{\loc}{\mu}
+\newcommand{\scale}{b}
+\newcommand{\KL}{\mathrm{KL}}
+\newcommand{\E}{\mathbb{E}}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+\begin{document}
+
+\title{Permutation-Invariant Knowledge Distillation for 
+Motion Prediction in Autonomous Vehicles}
+
+%% --- CAMERA-READY AUTHOR BLOCK: do NOT uncomment before acceptance ------
+% \author{
+% \IEEEauthorblockN{Maria Niki Zografou \quad and \quad Prof.\ Konstantinos Moustakas, \textit{Senior Member, IEEE}}
+% \IEEEauthorblockA{\textit{Dept.\ of Electrical and Computer Engineering} \\
+% \textit{University of Patras}\\
+% Patras, Greece \\
+% \{up1096060@ac.upatras.gr, moustakas@ece.upatras.gr\}}}
+%% ------------------------------------------------------------------------
+\author{
+\IEEEauthorblockN{Anonymous Author(s)}
+\IEEEauthorblockA{Affiliation withheld for double-anonymous review}}
+
+\maketitle
+\thispagestyle{empty}
+\pagestyle{empty}
+
+\begin{abstract}
+Motion prediction for autonomous vehicles requires models that are both accurate 
+and able to run on tight compute restrictions, yet the most successful predictors are too large 
+to be deployed and trained on limited hardware. The compression of these models, while retaining accuracy, 
+can be achieved through \emph{knowledge distillation}, but modern forecasters 
+can emit a \emph{mixture} of trajectories whose modes are ordered arbitrarily. Therefore,
+naively distilling mode~$k$ of a student from mode~$k$ of a teacher compares
+modes that do not necessarily correspond. We introduce a distillation objective that
+scores each teacher mode under the student's \emph{entire} predictive mixture and
+therefore needs no mode matching; it is permutation-invariant and remains defined
+when teacher and student carry a different number of modes. We show that the
+natural mean-target form of this objective (v1) transfers the teacher's mode
+\emph{locations} but drives the predicted scales below their calibrated
+value, improving geometric accuracy while breaking calibration. A
+distribution-matching form (v2) that scores samples carrying the teacher's own
+uncertainty scale repairs this. 
+On Argoverse 1 with HiVT, distilled students recover roughly $80\%$ 
+of the accuracy gap to the next-larger model, matching 
+a from-scratch predictor with $3.8\times$ more parameters, while being $15$--$55\times$ 
+smaller than the teacher and \emph{preserving calibration}.
+\end{abstract}
+
+\begin{IEEEkeywords}
+trajectory prediction, knowledge distillation, calibration, mixture density
+networks, autonomous driving.
+\end{IEEEkeywords}
+
+% ============================================================================
+\section{Introduction}
+Motion forecasting sits between perception and planning in an autonomous vehicle and
+predicts the future positions of every agent in a scene.  That future is inherently
+multi-modal; at an intersection an agent may turn or continue straight, so state-of-the-art
+models predict several future modes per agent, rather than a single path.
+
+Since driving is a safety-critical task, two properties matter together. 
+The forecast must be \emph{accurate}, with its best hypothesis close to the real future,
+and \emph{calibrated}, its stated uncertainty must be neither over- nor under-confident.
+An accurate but over confident predictor can prove dangerous, if a risk-aware planner 
+takes into account the proposed narrow uncertainty intervals, that do not accurately reflect 
+the capabilities of the model. Callibration is thus a main safety requirement.
+
+The most accurate of these models are large, while the on-vehicle inference budget
+is small; this asymmetry motivates \emph{compression}. Knowledge distillation
+(KD)~\cite{hinton2015} can train a small student to imitate a
+large teacher, facilitating the creation of small and accurate models. 
+It is important to note that applying KD to a multi-modal forecaster cannot be done naively
+by matching logits. The model used in this study is HiVT: Hierarchical
+vector transformer for multi-agent motion prediction~\cite{hivt}. Following
+standard multi-modal forecasting pipelines, HiVT is trained using a 
+\emph{winner-takes-all} (WTA) regression loss,
+originally proposed in~\cite{mtp2019}, which, on each scene updates only 
+the predicted mode closest to the ground truth. WTA produces accurate and diverse modes, 
+but it leaves the mapping 
+between a mode's \emph{index} and its \emph{meaning} arbitrary: the slot that
+encodes ``turn left'' in the teacher may encode ``go straight'' in the student, and
+this correspondence varies from scene to scene. A distillation loss that pairs modes by
+index therefore regresses one mode onto another. Empirically the identity
+pairing is optimal in essentially none of the scenes, so index-aligned KD spends
+much of its signal on mismatched pairs.
+
+One could recover a pairing with a Hungarian assignment, at the cost of a hard,
+non-differentiable matching step (Sec.~\ref{sec:method}). We take the opposite route
+and remove matching entirely.
+
+\noindent\textbf{Contributions.}
+\begin{itemize}
+\item A \emph{permutation-invariant} distillation objective (without matching) for
+Laplace-mixture trajectory predictors that scores every teacher mode under the
+student's full mixture density; it is defined for any
+teacher/student mode counts.
+\item An analysis showing that the natural mean-target form (v1) improves geometry
+but \emph{shrinks} the predictive scale and breaks calibration, juxtaposed with a
+distribution-matching form (v2) that scores samples carrying the teacher's scale,
+and repairs calibration. The v2 objective equals the \emph{forward} Kullback–Leibler 
+(KL) divergence from teacher to student, with v1 being its zero-variance limit.
+\item Experiments on Argoverse~1 with HiVT backbones: distilled students recover
+$\sim 80\%$ of the capacity gap at a fraction of the parameters and memory while
+preserving calibration, and inherit the safety-relevant mode-covering behaviour of
+the forward KL.
+\end{itemize}
+
+% ============================================================================
+\section{Related Work}
+\subsection{Multi-modal motion forecasting.} Vectorised encoders such as
+VectorNet~\cite{vectornet} and transformers such as
+HiVT~\cite{hivt} predict a fixed set of $K$ candidate trajectories, typically as a
+mixture density~\cite{bishop1994} trained with a WTA or best-of-$K$
+objective~\cite{mtp2019,multipath}. We use HiVT as both teacher and student because
+its hierarchical, symmetry-aware design remains accurate at small width on a single
+GPU.
+
+\subsection{Knowledge distillation.} KD transfers a teacher's soft
+targets to a student~\cite{hinton2015} and has been extended to intermediate
+features and to structured outputs in object detection. Distillation of
+\emph{multi-modal, mixture-valued} predictors is comparatively unexplored. One of
+the central obstacles to this approach is that mixture modes have no canonical order.
+This paper addresses this challenge, by providing two distinct objectives: 
+a mean-target form (v1) and a distribution-matching form (v2). 
+Our v2 objective is a distribution-matching loss, 
+connecting KD to 
+density estimation under the forward Kullback-Leibler divergence (KL).
+
+The closest concept to our approach is Ensemble Distribution Distillation (EnD$^2$)~\cite{endd}, 
+which distills an entire distribution over predictions to retain uncertainty. However, our 
+setting differs fundamentally: while EnD$^2$ fits a higher-order distribution over 
+indexed categorical outputs from an ensemble, we directly match a continuous, 
+unordered Laplace mixture from a single  
+multi-modal forecaster. Our objective is designed to be entirely matching-free and 
+permutation-invariant.
+
+\subsection{Calibration.} A planner consumes the whole predicted
+distribution, so a model that is accurate but over-confident is unsafe. We
+therefore track calibration (coverage of predicted intervals) alongside geometric
+error and examine whether the distillation process preserves it.
+
+% ============================================================================
+\section{Preliminaries and Problem}
+\label{sec:prelim}
+\subsection{Backbone.} HiVT~\cite{hivt} models the scene's interatcions 
+in two stages (Fig.~\ref{fig:arch}). A \emph{local} encoder builds, for 
+each agent, a symmetry-aware embedding taking into account nearby lane 
+vectors and agents and applying temporal attention over its own history. 
+All of this is compressed into a single vector per agent. 
+A \emph{global} interaction module then exchanges one vector per agent across the
+whole scene for long-range context, and a decoder emits the mixture of future trajectories.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/hivt_arch_cropped.png}
+  \caption{HiVT backbone (reproduced from Zhou~et~al.~\cite{hivt}). Local encoders
+  produce one embedding per agent (dashed); a global module exchanges those vectors
+  scene-wide (solid) before per-mode decoding. We vary the embedding width $d$ to
+  obtain teacher and students.}
+  \label{fig:arch}
+\end{figure}
+
+\subsection{Mixture output.} For an agent, HiVT predicts a Laplace mixture over the
+future trajectory $\mathbf{y}\in\R^{2H}$ ($H$ steps, two coordinates),
+\begin{equation}
+  \label{eq:mixture}
+  p(\mathbf{y}) = \sum_{k=1}^{K} \pi_k\,\Lap\!\left(\mathbf{y}\mid \loc_k,\scale_k\right),
+  \quad \pi_k\ge 0,\ \textstyle\sum_{k=1}^{K} \pi_k = 1,
+\end{equation}
+where mode $k$ has location $\loc_k$ (the trajectory), per-step scale $\scale_k$
+(its predicted uncertainty), and weight $\pi_k$. Each component is a product of
+$2H$ one-dimensional Laplace densities, $\Lap(y\mid\mu,b)=\tfrac{1}{2b}e^{-|y-\mu|/b}$.
+
+The two levels of the mixture separate two kinds of uncertainty. The weights
+$\{\pi_k\}$ and distinct locations $\{\loc_k\}$ capture \emph{which} manoeuvre an
+agent takes, while each per-step scale $\scale_k$ captures
+the \emph{within-trajectory} spatial uncertainty around a chosen path. A faithful
+distillation target must transfer both; a loss that moves the locations but discards
+the scales keeps the trajectories while destroying the calibration around the 
+predicted path of the trajectory, which is precisely the failure analysed 
+in Sec.~\ref{sec:calib}. 
+We keep HiVT's Laplace parameterisation unchanged, which corresponds 
+to an $L_1$ residual.
+
+\subsection{WTA training.} The regression term updates only the best mode
+$k^\star=\argmin_k \sum_t\lVert\loc_{k,t}-y^\star_t\rVert_2$,
+\begin{equation}
+  \label{eq:reg}
+  \mathcal{L}_{\mathrm{reg}} = -\tfrac{1}{H}\textstyle\sum_{t=1}^{H}
+    \log\Lap\!\left(y^\star_t\mid \loc_{k^\star,t},\scale_{k^\star,t}\right),
+\end{equation}
+so the other modes are free to specialise elsewhere. This is what makes the slot
+ordering arbitrary. To probe the honesty of the \emph{whole} mixture we use the
+mixture negative log-likelihood
+\begin{equation}
+  \label{eq:mixnll}
+  \mathcal{L}_{\mathrm{mix}} = -\log\textstyle\sum_{k=1}^{K}\pi_k\,
+    \Lap\!\left(\mathbf{y}^\star\mid\loc_k,\scale_k\right).
+\end{equation}
+
+
+\subsection{The mode-permutation problem.} Because WTA does not set a specific mode order, 
+two independently trained models will have different permutations of the same modes. 
+As a result, a distillation loss of the form $\sum_k d(\text{student}_k,\text{teacher}_k)$ compares
+arbitrary pairs. Since the teacher and student modes are not aligned, 
+an index-aligned distillation approach would lead to mismatched comparisons.
+A correct objective must be invariant to how either model happens to order its modes.
+Fig.~\ref{fig:perm} measures this on the validation set: the per-scene optimal
+teacher--student assignment concentrates on a non-identity permutation, and the
+identity pairing is optimal in $0\%$ of scenes.
+
+%figure of
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.6\linewidth]{figs/mode_perm_optimal.png}
+  \caption[Teacher--student mode assignment matrix.]{Per-scene optimal
+    teacher--student mode assignment, aggregated over the validation set: cell
+    $(i,j)$ counts the scenes whose optimal assignment maps teacher mode $j$ to
+    student mode $i$. The mass concentrates on a consistent \emph{non-identity}
+    permutation rather than the diagonal, and the full identity pairing is the
+    optimal assignment in $0\%$ of scenes (figure title), confirming that the two
+    models number their modes in unrelated orders. An index-aligned distillation
+    loss would therefore compare mismatched modes on essentially every scene.}
+  \label{fig:perm}
+\end{figure}
+
+
+% ============================================================================
+\section{Proposed Distillation Framework}
+\label{sec:method}
+\subsection{A matching-free, permutation-invariant objective}
+The student mode $k$ assigns the whole teacher trajectory $\loc^T_f$ the factorised
+log-likelihood
+\begin{equation}
+  \label{eq:traj}
+  \ell_{k,f} = \textstyle\sum_{t=1}^{H}\sum_{d=1}^{2}
+    \log\Lap\!\left(\loc^T_{f,t,d}\mid \loc^S_{k,t,d},\scale^S_{k,t,d}\right).
+\end{equation}
+Rather than pair modes, we score $\loc^T_f$ under the student's \emph{entire}
+mixture by marginalising over its modes with a numerically stable log-sum-exp,
+\begin{equation}
+  \label{eq:mixscore}
+  \log p_S\!\left(\loc^T_f\right)
+   = \log\textstyle\sum_{k=1}^{K_S}\pi^S_k\,
+     \Lap\!\left(\loc^T_f\mid\loc^S_k,\scale^S_k\right),
+\end{equation}
+and average over the teacher's modes weighted by the teacher's own confidence
+$\pi^T_f$. This yields the mean-target distillation loss
+\begin{equation}
+  \label{eq:v1}
+  \mathcal{L}_{\mathrm{v1}}
+   = -\textstyle\sum_{f=1}^{K_T}\pi^T_f\,
+     \log\textstyle\sum_{k=1}^{K_S}\pi^S_k\,
+     \Lap\!\left(\loc^T_f\mid\loc^S_k,\scale^S_k\right).
+\end{equation}
+The log-sum-exp acts as a smooth maximum: teacher mode $f$ is explained by whichever
+student mode(s) lie near it, selected by value rather than by index.
+
+\textbf{Property 1 (Permutation invariance).} 
+For any objective $\mathcal{L}=-\sum_{f=1}^{K_T}\pi^T_f\,g(p_S,\loc^T_f,\scale^T_f)$ in which the student enters 
+\emph{only} through its mixture density $p_S$, reordering the student's or the teacher's modes leaves $\mathcal{L}$
+ unchanged. Because the student and teacher index sets enter only through independent sums, no explicit matching is invoked.
+Therefore, the objective is well-defined for any $K_S$ and $K_T$, including $K_S \neq K_T$.
+
+\emph{Why not Hungarian matching?} A different approach would be to match 
+teacher--student modes in each scene by solving a linear assignment problem and   
+then distill the  paired modes. This
+reintroduces a hard, non-differentiable step, is undefined when $K_S\neq K_T$, and
+collapses ambiguous cases into a single winner-take-all correspondence that can 
+potentially flip discontinuously between training steps. Our objective avoids
+all three by never forming a pairing.
+
+\subsection{Why the mean target breaks calibration}
+\label{sec:calib}
+The failure of the mean-target objective (v1) 
+is a direct consequence of discarding $\scale^T_f$. By treating the teacher's target 
+as a zero-width point mass, the objective removes the penalty for 
+under-estimating variance. Scoring a teacher
+coordinate $\loc^T_f$ under a student's Laplace density rewards two things: moving the
+student's location $\loc^S_k$ toward the target, and shrinking the student's scale
+$\scale^S_k$ toward the residual error $|\loc^T_f - \loc^S_k|$. This is visible in the
+gradient of the scale, where the only term opposing $\scale\to 0$ vanishes as the 
+location term drives the residual to zero:
+\begin{equation}
+  \label{eq:v1grad}
+  \frac{\partial \mathcal{L}_{\mathrm{v1}}}{\partial \scale^S_{k,t,d}}
+   = \sum_{f=1}^{K_T}\pi^T_f\, r_{f\to k}
+     \!\left(\frac{1}{\scale^S_{k,t,d}}
+       - \frac{\lvert \loc^T_{f,t,d}-\loc^S_{k,t,d}\rvert}{(\scale^S_{k,t,d})^2}\right),
+\end{equation}
+with $r_{f\to k}=\pi^S_k\Lap(\loc^T_f\mid\loc^S_k,\scale^S_k)/p_S(\loc^T_f)$ the
+responsibility of student mode $k$ for teacher mean $f$. Setting it to zero, every
+stationary scale is
+\begin{equation}
+  \label{eq:bstar}
+  \scale^{S\star}_{k,t,d}
+   = \frac{\sum_f \pi^T_f\, r_{f\to k}\,\lvert \loc^T_{f,t,d}-\loc^S_{k,t,d}\rvert}
+          {\sum_f \pi^T_f\, r_{f\to k}} .
+\end{equation}
+The teacher's own within-mode spread $\scale^T_f$ appears \emph{nowhere} in
+\eqref{eq:bstar}: v1 matches only the scatter of the teacher's point predictions and
+discards the spread each of them carries. The same loss pulls $\loc^S_k$ onto the 
+teacher locations it explains, so those residuals shrink toward zero and the
+stationary scale $\scale^{S\star}$ shrinks with them, settling well below its
+calibrated value. This pathology touches only the scale, leaving the mode weights
+$\{\pi^S_k\}$ largely unaffected. The
+result is a predictor with better geometric accuracy that reports a lower uncertainty
+than justified, becoming systematically over-confident.
+
+\subsection{Distribution matching (v2) and the forward KL}
+The fix is to score not the bare teacher location but \emph{samples drawn using the
+teacher's own scale}:
+\begin{equation}
+  \label{eq:v2}
+  \mathcal{L}_{\mathrm{v2}} = -\textstyle\sum_{f=1}^{K_T}\pi^T_f\,
+    \E_{\mathbf{y}\sim\Lap(\loc^T_f,\scale^T_f)}\!\left[\log p_S(\mathbf{y})\right],
+\end{equation}
+estimated with $S$ Monte-Carlo draws per teacher mode. The student must now place
+density across the whole region the teacher considers plausible. Concretely, repeat
+the derivation of \eqref{eq:bstar} for a teacher mode explained by a single student
+mode ($r_{f\to k}\!\approx\!1$): the residual is replaced by its expectation under
+the teacher's own density, so the stationary scale becomes
+\begin{equation}
+  \label{eq:v2resid}
+  \scale^{S\star}=\E_{y\sim\Lap(\loc^T_f,\scale^T_f)}\lvert y-\loc^S_k\rvert
+   = \lvert\Delta\rvert+\scale^T_f\,e^{-\lvert\Delta\rvert/\scale^T_f}
+   \;\ge\;\scale^T_f ,
+\end{equation}
+with $\Delta=\loc^T_{f,t,d}-\loc^S_{k,t,d}$ (indices dropped). The teacher's
+spread---absent from \eqref{eq:bstar}---now floors the student's scale, so
+$\scale^S\!\to\!0$ is no longer stationary; at a matched location it is recovered
+exactly, since a Laplace's mean absolute deviation about its own location is its
+scale.
+
+\textbf{Property 2 (Generalization of v1).} 
+As $\scale^T_f\to\mathbf{0}$, the Laplace distribution approaches a Dirac delta function
+ ($\Lap(\loc^T_f,\scale^T_f)\to\delta_{\loc^T_f}$), and \eqref{eq:v2} naturally reduces to \eqref{eq:v1}.
+
+\textbf{Why Monte Carlo.} Drawing $\mathbf{y}\sim\Lap(\loc^T_f,\scale^T_f)$ is exact
+and inexpensive, since the Laplace CDF is invertible in closed form.
+But since $p_S$ is a mixture, $\log p_S(\mathbf{y})$ contains a $\log\sum_k(\cdot)$ that
+does not decompose across modes, and \eqref{eq:v2} integrates it against the
+teacher's own density with no closed form---unlike \eqref{eq:v1}, which evaluates
+$\log p_S$ at a single point and needs no integral at all. We therefore use the
+sample average $\E_{\mathbf{y}}[\log p_S(\mathbf{y})]\approx\frac{1}{S}
+\sum_{s=1}^{S}\log p_S(\mathbf{y}_s)$ over the existing draws (the
+estimate adds no sampling cost).
+
+\textbf{Property 3 (Equivalence to the forward KL).} 
+Let $p_T(\mathbf{y})=\sum_f\pi^T_f\Lap(\mathbf{y}\mid\loc^T_f,\scale^T_f)$. The v2 objective can be rewritten as:
+\begin{equation}
+  \label{eq:kl}
+  \mathcal{L}_{\mathrm{v2}}
+   = -\,\E_{\mathbf{y}\sim p_T}\!\left[\log p_S(\mathbf{y})\right]
+   = \KL\!\left(p_T\Vert p_S\right) + H(p_T).
+\end{equation}
+Since the teacher's entropy $H(p_T)$ is constant with respect to the student, optimizing $\mathcal{L}_{\mathrm{v2}}$ 
+is strictly equivalent to minimizing the forward KL divergence $\KL(p_T\Vert p_S)$, 
+so v2 is distribution matching in the
+strict sense. v1 is the same cross-entropy with the teacher's spread collapsed to
+point masses, which is why it transfers locations but discards scales.
+
+\textbf{Why the forward, mode-covering direction.}  We want the student to cover
+the teacher's entire probability mass, and therefore all of its plausible modes,
+so we use the forward KL $\KL(p_T\Vert p_S)$, which is mode-covering. The reverse
+KL is mode-seeking and permits the student to lock onto a single mode. 
+In the context of motion prediction, a mode-seeking student would be unsafe: it would ignore the 
+possibility of other plausible modes and the planner would not be 
+able to prepare for them. The forward direction is also the cheaper one, since it naturally
+occurs when sampling from the teacher's distribution, which has been cached to disk --teacher inference does not add any computational cost. 
+
+\textbf{Training objective and implementation.} Both variants enter the student's
+loss as a single added term,
+\begin{equation}
+  \label{eq:total}
+  \mathcal{L} = \mathcal{L}_{\mathrm{reg}} + \mathcal{L}_{\mathrm{cls}}
+    + \lambda\,\mathcal{L}_{\mathrm{KD}},
+  \qquad
+  \mathcal{L}_{\mathrm{KD}}\in\{\mathcal{L}_{\mathrm{v1}},\mathcal{L}_{\mathrm{v2}}\},
+\end{equation}
+with $\mathcal{L}_{\mathrm{reg}}$ the WTA term~\eqref{eq:reg},
+$\mathcal{L}_{\mathrm{cls}}$ HiVT's unchanged mode-classification term, and
+$\lambda\ge0$ the distillation weight ($\lambda{=}0$ recovers from-scratch
+training). $\mathcal{L}_{\mathrm{KD}}$ is averaged over the $2H$ predicted
+coordinates, so $\lambda$ sits on the same numerical scale as the regression term.
+For v2 we draw $S{=}8$ samples per teacher mode by inverse-CDF reparameterisation.
+Both variants compute the student's mixture log-density entirely in log-space with a
+numerically stable \texttt{logsumexp} reduction, which prevents the underflow and
+\texttt{NaN} gradients that occur when a teacher target lands far from the student's
+modes. The frozen teacher's predictions are computed once offline and cached, so
+teacher inference never runs during training and distillation adds no architectural
+or inference cost to the student. 
+% ============================================================================
+\section{Experiments}
+\label{sec:exp}
+\textbf{Setup.} We use Argoverse~1 motion forecasting~\cite{argoverse} ($205{,}942$ train /
+$39{,}472$ val scenes; $2$\,s of history, $3$\,s / $H{=}30$ prediction at $10$\,Hz,
+$K{=}6$ modes). The teacher is HiVT-128 ($2.56$\,M parameters); students are HiVT-32
+and -16 ($170$\,k, $46$\,k). We also compare to the pretrained HiVT-64 model ($653$\,k).
+We report geometric best-of-$K$ metrics minADE, minFDE (primary) and miss rate
+(MR, endpoint $>2$\,m), and calibration via coverage of the predicted
+intervals, the mean scale $b$, and mixNLL. All runs fit on a single consumer GPU. Students are
+tuned from scratch before any distillation: HiVT-16 requires $2$ attention heads
+(the default $8$ starve each head of dimension at width $16$) and a smaller learning
+rate than HiVT-32 ($\eta{=}1\mathrm{e}{-}3$ vs.\ $3\mathrm{e}{-}3$, batch size $128$), 
+so the distillation comparison is against a properly tuned rather
+than a handicapped baseline. We fix $S{=}8$ Monte-Carlo draws per teacher mode as a
+variance/cost trade-off.
+
+Concretely, for each nominal level $p$ we measure the fraction of ground-truth points
+falling inside the predicted central $p$-interval; the calibration error is the mean
+absolute gap between empirical and nominal coverage over levels, and a curve below the
+diagonal (Fig.~\ref{fig:rel}) means the intervals are too narrow.
+
+\textbf{Accuracy degrades but calibration remains healthy.}
+Table~\ref{tab:baseline} shows from-scratch baselines: accuracy degrades
+faster-than-linearly as width shrinks (the $32\to16$ step costs $+0.45$\,m minFDE
+versus $+0.13$\,m for $64\to32$), so the smallest students have the most to recover.
+Calibration error is $\le 0.047$ everywhere, and lowest at the smallest widths, so
+there is no pre-existing defect for distillation to inherit: any calibration damage
+would be introduced by the method itself.
+
+\begin{table}[t]
+  \centering
+  \caption{From-scratch HiVT baselines on Argoverse~1 validation. Accuracy falls
+  faster-than-linearly with width; calibration is already good. The HiVT-16 row is the
+  default-seed run; its three-seed mean minFDE is $1.562$ (Table~\ref{tab:seeds16}).}
+  \label{tab:baseline}
+  \begin{tabular}{lrrrrr}
+    \toprule
+    Model & Params & minADE$\downarrow$ & minFDE$\downarrow$ & MR$\downarrow$ & calib.\ err \\
+    \midrule
+    HiVT-128 (teacher) & $2.56$\,M & $0.661$ & $0.969$ & $0.092$ & $0.047$ \\
+    HiVT-64            & $653$\,k  & $0.687$ & $1.030$ & $0.103$ & $0.042$ \\
+    HiVT-32 (student)  & $170$\,k  & $0.736$ & $1.157$ & $0.122$ & $0.033$ \\
+    HiVT-16 (student)  & $46$\,k   & $0.886$ & $1.605$ & $0.199$ & $0.028$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\textbf{v1 improves geometry but worsens calibration; v2 repairs it.}
+Table~\ref{tab:hivt32} distils into HiVT-32 (single seed per arm). Both v1 and
+v2 close most of the geometric gap (minFDE $1.157\to1.050$, $-9.2\%$; minADE
+$0.736\to0.698$; MR $0.122\to0.106$). They differ in calibration. Under v1 the
+calibration error rises more than five-fold ($0.033\to0.184$) and the mean scale
+contracts by $36\%$ ($0.418\to0.268$), so its nominal $90\%$ intervals cover only
+$71\%$ of targets. This is the shrinkage predicted by \eqref{eq:bstar}: the
+stationary scale is a weighted average of the student's residuals to the
+teacher's mean predictions, the location term drives those residuals toward
+zero, and the teacher's own spread $\scale^T_f$ never enters. v2 achieves the
+same geometry while keeping calibration ($0.033\to0.028$, below both the
+baseline and the teacher) and coverage ($0.909$), and it improves mixNLL below
+the no-KD baseline. Its mean scale settles at $0.413$, above the teacher's own
+$0.358$. This is expected since the student is less accurate, so its residuals are wider
+and honest intervals must be wider too. Fig.~\ref{fig:rel} shows the split directly: v1's reliability curve bows below the
+diagonal at every nominal level, whereas v2's is indistinguishable from the
+from-scratch baseline.
+
+\textbf{Distillation does not collapse the modes.} A separate failure other than
+scale shrinkage is \emph{mode collapse}, where a student imitating the teacher
+quietly abandons its alternative hypotheses. Two diagnostics, on the v1 sweep 
+and the v2 students respectively, show this does not occur. Across a v1
+$\lambda$-sweep ($25\%$-data proxy) the mode-weight entropy does not fall,
+rising from $1.74$ to $1.76$ nats against the $\ln 6 = 1.792$ ceiling, a $1\%$
+move in the direction opposite to collapse, while the mean scale contracts
+$32\%$ ($0.542\to0.366$) over the same runs: the pathology of
+Sec.~\ref{sec:calib} touches only $\scale$. Geometrically, the mean pairwise
+distance between the six predicted mode endpoints is $5.45$\,m for the
+v2-distilled HiVT-16 and $5.08$\,m for HiVT-32, bracketing the teacher's own
+$5.15$\,m, with fewer than $2\%$ of mode pairs landing within $1$\,m of each
+other (below the teacher's $2.6\%$). Distillation tightens the spread relative
+to the from-scratch student ($6.37\to5.45$\,m for HiVT-16) but toward the
+teacher's more concentrated and more accurate set, not toward zero, which is the
+behaviour the mode-covering forward KL of Sec.~\ref{sec:method} predicts.
+
+\begin{table}[t]
+  \centering
+  \caption{Distillation into HiVT-32 ($\lambda{=}0.5$, single seed per arm). v1 and
+  v2 tie on geometry; only v2 preserves calibration.}
+  \label{tab:hivt32}
+  \begin{tabular}{lrrrr}
+    \toprule
+     & no-KD & v1 & v2 & teacher \\
+    \midrule
+    minADE$\downarrow$      & $0.736$ & $0.696$ & $0.698$ & $0.661$ \\
+    minFDE$\downarrow$      & $1.157$ & $1.050$ & $1.050$ & $0.969$ \\
+    MR$\downarrow$          & $0.122$ & $0.105$ & $0.106$ & $0.092$ \\
+    mixNLL$\downarrow$      & $26.6$  & $38.0$  & $24.2$  & $21.1$  \\
+    calib.\ err$\downarrow$ & $0.033$ & $0.184$ & $0.028$ & $0.047$ \\
+    mean $b$                & $0.418$ & $0.268$ & $0.413$ & $0.358$ \\
+    cov@p90                 & $0.903$ & $0.711$ & $0.909$ & $0.894$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/reliability_v1_v2.png}
+  \caption{Reliability (empirical vs.\ nominal coverage) for the three HiVT-32
+models of Table~\ref{tab:hivt32} (full data, $\lambda{=}0.5$). A curve below the
+diagonal means the predicted intervals are too narrow. v1 is under-covering at
+\emph{every} nominal level---its nominal $90\%$ interval captures only $71.1\%$ of
+targets---while v2 lies on the from-scratch reference ($0.909$ vs.\ $0.903$).
+Distribution matching therefore removes the calibration penalty without giving up
+any of v1's geometry.}
+\label{fig:rel}
+\end{figure}
+
+\textbf{The smallest student benefits most.} Distilling HiVT-16 with v2
+($\lambda{=}1.0$) improves minFDE by $21.6\%$ (3-seed mean; $22.7\%$ on the default
+single seed), cuts MR by $31\%$, and improves mixNLL by $16\%$, all while
+\emph{improving} calibration (Table~\ref{tab:seeds16}). The effect is robust across
+seeds: the distilled and non-distilled clouds do not overlap (worst v2 minFDE
+$1.24 <$ best no-KD $1.47$), so the gain is not seed noise. The single-run A/B used
+the default seed, whose no-KD run sits at the weak end of the baseline spread, so its
+$-22.7\%$ headline slightly overstates the $-21.6\%$ seed mean; we quote the seed
+mean as the primary figure.
+
+\begin{table}[htbp]
+  \centering
+  \caption{HiVT-16 multi-seed confirmation (full data, $64$ epochs):
+    mean$\pm$sample standard deviation over independent random seeds (no~KD
+    $n{=}3$, v2 $n{=}3$). One further from-scratch seed that collapsed into a
+    degenerate scale-inflated optimum is excluded as non-converged;
+    $\Delta$ is computed on the means. Lower is better
+    for all rows. The distillation gain is reproducible and lies well outside the
+    seed spread---indeed the two arms do not overlap on any individual seed.}
+  \label{tab:seeds16}
+  \begin{tabular}{lccr}
+    \toprule
+    Metric & no KD ($n{=}3$) & v2, $\lambda{=}1.0$ ($n{=}3$) & $\Delta$ \\
+    \midrule
+    minADE      & $0.875 \pm 0.021$   & $0.771 \pm 0.005$   & $-11.8\%$ \\
+    minFDE      & $1.562 \pm 0.080$   & $1.224 \pm 0.018$   & $-21.6\%$ \\
+    MR          & $0.189 \pm 0.016$   & $0.130 \pm 0.002$   & $-31.0\%$ \\
+    mixNLL      & $34.9 \pm 1.0$      & $29.4 \pm 0.3$      & $-15.7\%$ \\
+    calib.\ err & $0.0283 \pm 0.0010$ & $0.0229 \pm 0.0004$ & $-19.1\%$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% \begin{table}[t]
+%   \centering
+%   \caption{v2 distillation into HiVT-16 ($\lambda{=}1.0$), $3$-seed mean$\pm$std per
+%   arm, relative to the from-scratch student. Both geometry and calibration improve.
+%   Lower is better throughout. ($\Delta$ minFDE also shows the best single run.)}
+%   \label{tab:hivt16}
+%   \begin{tabular}{lccr}
+%     \toprule
+%     Metric & no-KD ($n{=}3$) & v2 ($n{=}3$) & $\Delta$ \\
+%     \midrule
+%     minADE $\downarrow$        & $0.875$  & $0.771$  & $-11.8\%$ \\
+%     minFDE $\downarrow$        & $1.562$  & $1.224$  & $-21.6\%$ \,($-22.7\%$ single) \\
+%     miss rate $\downarrow$     & $0.189$  & $0.130$  & $-31.0\%$ \\
+%     mixNLL $\downarrow$        & $34.9$   & $29.4$   & $-15.7\%$ \\
+%     calib.\ err $\downarrow$   & $0.0283$ & $0.0229$ & $-19.1\%$ \\
+%     \bottomrule
+%   \end{tabular}
+% \end{table}
+
+\textbf{The gain concentrates in the hard, far-future tail.} Truncating each
+prediction to $1$/$2$/$3$\,s and re-selecting the best mode at each cut-off shows the
+v2 minFDE improvement growing monotonically with the horizon: for HiVT-16,
+$-7.7\%\to-15.1\%\to-22.7\%$ at $1$/$2$/$3$\,s, and for HiVT-32,
+$-3.3\%\to-7.6\%\to-9.2\%$. In the first second the from-scratch student is already
+close to the teacher; the teacher's guidance is worth most in the long-horizon,
+high-uncertainty part of the trajectory, exactly where limited capacity hurts.
+
+\textbf{Accuracy--capacity frontier.} Fig.~\ref{fig:frontier} places the distilled
+students on the parameter--accuracy curve. Distilled HiVT-32 ($1.050$) comes within $2\%$
+of the from-scratch HiVT-64 ($1.030$) at $3.8\times$ fewer parameters, recovering
+$\sim 84\%$ of the $32\!\to\!64$ gap; HiVT-16 recovers $\sim 83\%$ of the
+$16\!\to\!32$ gap, landing within $5.8\%$ of the \emph{un-distilled} HiVT-32 at
+$27\%$ of its parameters. Relative to the teacher the students are $15\times$ and
+$55\times$ smaller and use $3.6\times$ and $6.3\times$ less GPU memory respectively (Table~\ref{tab:eff}).
+That $55\times$ is a parameter and \emph{memory} claim, not a wall-clock one. On CPU the speedup is $3.0\times$ at $bs{=}1$ and
+ $5.8$--$11.5\times$ under batching, and on GPU it largely vanishes ($1$--$2.6\times$), 
+ since the students never saturate the device and width-independent overhead sets the runtime.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/frontier.png}
+  \caption{Accuracy--capacity frontier (log parameter axis). Distillation (arrows)
+  moves each small student up the curve toward the next larger model at a fraction
+  of the parameters.}
+  \label{fig:frontier}
+\end{figure}
+
+\begin{table}[t]
+  \centering
+  \caption{Deployment footprint relative to the HiVT-128 teacher. The
+  parameter/memory savings are large; latency savings (batched CPU) are real but
+  smaller and hardware-dependent.}
+  \label{tab:eff}
+  \begin{tabular}{lrrr}
+    \toprule
+    Model & Params & Param$\times$ & GPU mem $\times$ \\
+    \midrule
+    HiVT-128 (teacher) & $2.56$\,M & $1\times$  & $1\times$ \\
+    HiVT-32 (v2)       & $170$\,k  & $15\times$ & up to $\sim$3.6$\times$ \\
+    HiVT-16 (v2)       & $46$\,k   & $55\times$ & up to $\sim$6.3$\times$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\textbf{Deployment discussion.} The result that matters for deployment is that
+calibration survives compression \emph{for free}: v2 adds only a training-time loss
+and changes nothing at inference, so the student's compute, memory, and latency are
+those of a small model while its predictive honesty matches a large one. This is exactly
+what on-vehicle and latency-bound settings demand. The method is agnostic to the
+backbone and assumes only a Laplace-mixture head, so it transfers to other mixture
+forecasters without change.
+
+\textbf{Ablations and observations.} On the $25\%$-data proxy, v1 geometry
+improves steeply from $\lambda{=}0$ and then saturates (minFDE
+$1.68\to1.37\to1.39\to1.42$ for $\lambda{=}0/0.25/0.5/1.0$): the proxy ranks
+$\lambda\approx0.25$--$0.5$ best, and the difference between them ($1.4\%$) is an
+order of magnitude smaller than the $18\%$ gain over $\lambda{=}0$. We carry
+$\lambda{=}0.5$ forward for HiVT-32 as a standard value and a
+geometry/calibration compromise, and select $\lambda{=}1.0$ for HiVT-16 on
+validation minFDE, the smaller student benefiting from a stronger signal. Under
+v1, calibration error instead degrades monotonically from the first step
+($0.0245\to0.155$ over the same sweep), so $\lambda$ is not directly comparable 
+across the two loss variants. Re-running the same sweep under v2 separates the
+two effects cleanly: calibration error stays flat in $\lambda$
+($0.024/0.022/0.025$ at $\lambda{=}0.25/0.5/1.0$, against $0.0245$ at
+$\lambda{=}0$), while geometry keeps improving where v1's has already turned
+around (minFDE $1.41/1.30/1.29$ under v2 versus $1.37/1.39/1.42$ under v1).  A
+given $\lambda$ therefore means different things under the two objectives, which
+is also why the stronger $\lambda{=}1.0$ setting is usable for HiVT-16 under v2:
+with the scale-shrinkage pathology removed, extra distillation signal is no
+longer paid for in calibration.
+% ============================================================================
+\section{Conclusion}
+We presented a permutation-invariant, matching-free distillation objective for the
+multi-modal Laplace-mixture output of a trajectory predictor. Because two
+independently trained mixtures number their modes in unrelated orders, any
+index-aligned loss compares mismatched modes; scoring the teacher's predictions under
+the student's \emph{full} mixture density avoids this, needs no mode assignment, and
+stays defined when teacher and student carry different numbers of modes. Of its two
+forms, the mean-target one (v1) transfers the teacher's mode locations and weights but
+discards its predictive scales, improving best-of-$K$ geometry while degrading
+calibration; the distribution-matching one (v2)---the Monte-Carlo forward KL from
+teacher to student---restores those scales by scoring samples drawn with
+$\scale^T_f$, and on HiVT and Argoverse~1 keeps v1's full geometric gain with
+calibration intact. 
+
+Empirically, distilling the HiVT-128 teacher into much smaller students recovers
+roughly a full size-class of accuracy at the students' own parameter count: HiVT-32
+($6.6\%$ of the teacher's parameters) improves minFDE by $9.2\%$ and lands close to a
+from-scratch HiVT-64 with $3.8\times$ more parameters, and HiVT-16 ($1.8\%$) improves
+it by about $22\%$ (seed-mean $21.6\%$ over three seeds), approaching an un-distilled
+HiVT-32. The gain is larger for the smaller student and concentrated in the
+longer-horizon part of the trajectory, and the efficiency dividend is a parameter and
+memory saving (up to $6.3\times$ less peak GPU memory) rather than a latency one.
+
+\textbf{Limitations and future work.} Our evaluation is confined to a single teacher,
+dataset, and backbone, and uses best-of-$K$ metrics with no closed-loop planning
+objective, so the practical value of the retained calibration for a downstream
+planner is argued for but not measured. The assignment-based (Hungarian / optimal transport)
+alternative is argued against in Sec.~\ref{sec:method} but not benchmarked as a
+trained baseline. The HiVT-16 result is supported by a multi-seed study, but the HiVT-32
+headline rests on a single converged run, and a matched HiVT-32 seed sweep remains to
+be done. Extending the method to multiple backbones and datasets, placing a planner in
+the loop, transferring differing mode counts ($K_S \neq K_T$), and modelling epistemic
+uncertainty are natural next steps.
+
+% ============================================================================
+% AI-use disclosure required by the ICRA 2027 generative-AI policy, which
+% covers code as well as text. It names a tool, not a person or a funder, so
+% it is compatible with double-anonymous review and STAYS IN the submitted
+% version. Personal thanks and funding go here only at camera-ready.
+% ============================================================================
+\section*{Acknowledgment}
+In accordance with the IEEE policy on the use of generative AI, we disclose
+that portions of the research code accompanying this work were co-developed
+with the assistance of Claude Code (Anthropic). The tool was used as a
+programming assistant while implementing and refactoring the distillation
+objectives of Sec.~\ref{sec:method} and the evaluation and plotting scripts
+behind Sec.~\ref{sec:exp}. It was not used to generate the text of this
+paper, its experimental results, or its scientific claims. All
+AI-assisted code was reviewed, executed and verified by the authors, who
+take full responsibility for the correctness of the implementation and of
+the reported results.
+
+\begin{thebibliography}{00}
+\bibitem{hinton2015} G.~Hinton, O.~Vinyals, and J.~Dean, ``Distilling the knowledge
+in a neural network,'' in \emph{NeurIPS Deep Learning Workshop}, 2015.
+\bibitem{hivt} Z.~Zhou, L.~Ye, J.~Wang, K.~Wu, and K.~Lu, ``HiVT: Hierarchical
+vector transformer for multi-agent motion prediction,'' in \emph{CVPR}, 2022.
+\bibitem{vectornet} J.~Gao \emph{et al.}, ``VectorNet: Encoding HD maps and agent
+dynamics from vectorized representation,'' in \emph{CVPR}, 2020.
+\bibitem{bishop1994} C.~M.~Bishop, ``Mixture density networks,'' Aston University,
+Tech.\ Rep., 1994.
+\bibitem{mtp2019} H.~Cui \emph{et al.}, ``Multimodal trajectory predictions for
+autonomous driving using deep convolutional networks,'' in \emph{ICRA}, 2019.
+\bibitem{multipath} Y.~Chai, B.~Sapp, M.~Bansal, and D.~Anguelov, ``MultiPath:
+Multiple probabilistic anchor trajectory hypotheses for behavior prediction,'' in
+\emph{CoRL}, 2019.
+\bibitem{argoverse} M.-F.~Chang \emph{et al.}, ``Argoverse: 3D tracking and
+forecasting with rich maps,'' in \emph{CVPR}, 2019.
+\bibitem{endd} A.~Malinin, B.~Mlodozeniec, and M.~Gales, ``Ensemble distribution
+distillation,'' in \emph{ICLR}, 2020. arXiv:1905.00076.
+\end{thebibliography}
+
+\end{document}

@@ -229,9 +229,7 @@ def shot01_title(fw):
         fig.text(0.5, 0.60, PAPER_TITLE, fontsize=32, color=INK,
                  fontweight='semibold', ha='center', va='center', linespacing=1.45)
         if step >= 1:
-            fig.text(0.5, 0.40, 'Distilling a mixture-density predictor is a structurally '
-                                'different problem\nfrom distilling a classifier and needs'
-                                ' a different approach.',
+            fig.text(0.5, 0.40, 'Submitted to ICRA 2027 ',
                      fontsize=16, color=INK_2, ha='center', va='center', linespacing=1.6)
         if step >= 2:
             fig.text(0.5, 0.22, 'Argoverse 1  ·  HiVT  ·  2.56 M-parameter teacher → 46 k-parameter student',
@@ -240,9 +238,42 @@ def shot01_title(fw):
 
     fw.add(frame(0), 3.0)
     fw.add(frame(1), 3.0)
-    fw.add(frame(2), 4.0)
+    fw.add(frame(2), 3.0)
 
-
+def shot015_problem_statement(fw):
+    lines = [
+        (BLUE, 'Motion prediction is a safety critical task',
+         'that requires accuracy, callibration and\n'
+         'the ability to run on constrained embedded hardware.'),
+        (ORANGE, 'Modern predictors demand a lot of memory and compute',
+         'this assymetry motivates compression\n'),
+         (INK, 'Downsizing a model worsens accuracy',
+          'but knowledge distillation can mitigate this issue.\n'),
+        (AQUA, 'Knowledge distillation trains a smaller student model to mimic a larger teacher',
+         'but distilling a mixture-density predictor is a structurally different problem from distilling a classifier\n'
+         ),
+        # (INK, 'That buys back most of a size class',
+        #  'HiVT-32 + v2 reaches 1.050 minFDE — within 2% of a from-scratch HiVT-64 that\n'
+        #  'carries 3.8× the parameters. The student is 46 k–170 k, the teacher 2.56 M.'),
+    ]
+    def frame(n):
+        fig = new_frame()
+        title(fig, 'Knowledge distillation for motion prediction', y=0.90, size=22)
+        y = 0.76
+        for i in range(n):
+            color, head, body = lines[i]
+            fig.patches.append(plt.Rectangle((0.055, y - 0.078), 0.006, 0.118,
+                                             transform=fig.transFigure,
+                                             facecolor=color, edgecolor='none'))
+            fig.text(0.085, y + 0.020, head.strip(), fontsize=16, color=INK,
+                     fontweight='semibold', ha='left', va='center')
+            fig.text(0.085, y - 0.040, body.strip(), fontsize=12.5, color=INK_2,
+                     ha='left', va='top', linespacing=1.55)
+            y -= 0.175
+        return fig
+    for i, hold in enumerate((3.0, 3.0, 3.4, 3.6)):
+    #for i, hold in enumerate((3.0, 3.0, 3.5)):
+        fw.add(frame(i + 1), hold)
 # --------------------------------------------------------------------------- #
 # 2. Why distillation  (20 s)
 # --------------------------------------------------------------------------- #
@@ -970,7 +1001,7 @@ def shot09_takeaway(fw):
             y -= 0.175
         return fig
 
-    for i, hold in enumerate((3.2, 3.4, 3.4, 5.0)):
+    for i, hold in enumerate((3.0, 3.0, 3.4, 3.6)): # 3.2, 3.4, 3.4, 5
         fw.add(frame(i + 1), hold)
 
 

@@ -38,7 +38,8 @@ CAP_BYTES = 20 * 1024 * 1024   # PaperPlaza: "up to 20MB", per the ICRA 2026
 # Budget is the design intent; actual is measured after render and reported per
 # shot so drift is visible.
 TIMELINE = [
-    (1, 'title', 10.0),
+    (1, 'title', 9.0),
+    (1.5, 'problem statement', 13.0), 
     (2, 'why distillation', 20.0),
     (3, 'BEAT 1 — mode permutation', 14.0),
     (4, 'the objective', 12.0),
@@ -47,7 +48,7 @@ TIMELINE = [
     (7, 'reliability', 12.0),
     (8, 'results', 29.5),
     (11, 'deployment footprint', 9.0),
-    (9, 'takeaway', 15.0),
+    (9, 'takeaway', 13.0), #15
    # (10, 'reprise', 3.5),
 ]
 
@@ -86,6 +87,7 @@ def main():
 
     builders = {
         1: lambda fw: S.shot01_title(fw),
+        1.5: lambda fw: S.shot015_problem_statement(fw),
         2: lambda fw: S.shot02_why_kd(fw),
         3: lambda fw: S.shot03_permutation(fw, tr),
         4: lambda fw: S.shot04_objective(fw),
